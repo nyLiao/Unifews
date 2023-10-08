@@ -1,59 +1,15 @@
 import os
-from abc import ABC
 from datetime import datetime
 import uuid
 import json
 import copy
+from typing import Union, Callable
 from dotmap import DotMap
 import torch
 import torch.nn as nn
 
 
-class ScoreCalculator(ABC):
-    def __init__(self, num_classes):
-        self.num_classes = num_classes
-        self.TP = torch.zeros(self.num_classes)
-        self.FP = torch.zeros(self.num_classes)
-        self.FN = torch.zeros(self.num_classes)
-
-    def update(self, y_true, y_pred):
-        if len(y_true.shape) == 1 or y_true.shape[1] == 1:
-            y_true = nn.functional.one_hot(y_true, num_classes=self.num_classes)
-        if len(y_pred.shape) == 1 or y_pred.shape[1] == 1:
-            y_pred = nn.functional.one_hot(y_pred, num_classes=self.num_classes)
-        self.TP += (y_true * y_pred).sum(dim=0).cpu()
-        self.FP += ((1 - y_true) * y_pred).sum(dim=0).cpu()
-        self.FN += (y_true * (1 - y_pred)).sum(dim=0).cpu()
-
-    def compute(self, average=None):
-        eps = 1e-10
-        if average == 'micro':
-            f1 = 2 * self.TP.float().sum() / (2 * self.TP.sum() + self.FP.sum() + self.FN.sum() + eps)
-            return f1.item()
-        elif average == 'macro':
-            f1 = 2 * self.TP.float() / (2 * self.TP + self.FP + self.FN + eps)
-            return f1.mean().item()
-        else:
-            raise ValueError('average must be "micro" or "macro"')
-
-
-def get_num_params(model):
-    num_paramst = sum([param.nelement() for param in model.parameters() if param.requires_grad])
-    num_params = sum([param.nelement() for param in model.parameters()])
-    num_bufs = sum([buf.nelement() for buf in model.buffers()])
-    # return num_paramst/(1000**2), num_params/(1000**2), num_bufs/(1000**2)
-    return num_paramst/(1000**2)
-
-
-def get_mem_params(model):
-    mem_paramst = sum([param.nelement()*param.element_size() for param in model.parameters() if param.requires_grad])
-    mem_params = sum([param.nelement()*param.element_size() for param in model.parameters()])
-    mem_bufs = sum([buf.nelement()*buf.element_size() for buf in model.buffers()])
-    # return mem_paramst/(1024**2), mem_params/(1024**2), mem_bufs/(1024**2)
-    return (mem_params+mem_bufs)/(1024**2)
-
-
-def prepare_opt(parser):
+def prepare_opt(parser) -> DotMap:
     # Parser to dict
 	opt_parser = vars(parser.parse_args())
 	# Config file to dict
@@ -64,8 +20,8 @@ def prepare_opt(parser):
 	return DotMap({**opt_parser, **opt_config})
 
 
-class Logger(ABC):
-    def __init__(self, data, algo, flag_run=''):
+class Logger(object):
+    def __init__(self, data: str, algo: str, flag_run: str=''):
         super(Logger, self).__init__()
 
         # init log directory
@@ -87,13 +43,13 @@ class Logger(ABC):
         self.file_log = self.path_join('log.txt')
         self.file_config = self.path_join('config.json')
 
-    def path_join(self, *args):
+    def path_join(self, *args) -> str:
         """
         Generate file path in current directory.
         """
         return os.path.join(self.dir_save, *args)
 
-    def print(self, s):
+    def print(self, s) -> None:
         """
         Print string to console and write log file.
         """
@@ -101,7 +57,7 @@ class Logger(ABC):
         with open(self.file_log, 'a') as f:
             f.write(str(s) + '\n')
 
-    def print_on_top(self, s):
+    def print_on_top(self, s) -> None:
         """
         Print string on top of log file.
         """
@@ -114,15 +70,15 @@ class Logger(ABC):
             f.write(str(s) + '\n')
             f.write(temp)
 
-    def save_opt(self, opt):
-        with open(self.file_config, 'a') as f:
+    def save_opt(self, opt: DotMap) -> None:
+        with open(self.file_config, 'w') as f:
             json.dump(opt.toDict(), fp=f, indent=4, sort_keys=False)
             f.write('\n')
         print("Option saved.")
         print("Config path: {}".format(self.file_config))
         print("Option dict: {}\n".format(opt.toDict()))
 
-    def load_opt(self):
+    def load_opt(self) -> DotMap:
         with open(self.file_config, 'r') as config_file:
             opt = DotMap(json.load(config_file))
         print("Option loaded.")
@@ -131,26 +87,41 @@ class Logger(ABC):
         return opt
 
 
-class ModelLogger(ABC):
+class ModelLogger(object):
     """
-    Log, save, and load model, with given path, certain prefix, and changable suffix.
+    Log, save, and load model, with given path, certain prefix, and changeable suffix.
     """
-    def __init__(self, logger, prefix='model', state_only=False):
+    def __init__(self, logger: Logger, patience: int=99999,
+                 prefix: str='model', storage: str='model_gpu',
+                 cmp: Union[Callable[[float, float], bool], str]='>'):
         super(ModelLogger, self).__init__()
         self.logger = logger
+        self.patience = patience
         self.prefix = prefix
-        self.state_only = state_only
         self.model = None
+
+        # Storage type
+        assert storage in ['model', 'state', 'model_ram', 'state_ram', 'model_gpu', 'state_gpu']
+        self.storage = storage
+
+        # Comparison function for metric
+        if cmp in ['>', 'max']:
+            self.cmp = lambda x, y: x > y
+        elif cmp in ['<', 'min']:
+            self.cmp = lambda x, y: x < y
+        else:
+            self.cmp = cmp
 
     @property
     def state_dict(self):
         return self.model.state_dict()
 
-    def __set_model(self, model):
+    # ===== Load and save
+    def __set_model(self, model: nn.Module) -> nn.Module:
         self.model = model
         return self.model
 
-    def regi_model(self, model, save_init=True):
+    def register(self, model: nn.Module, save_init: bool=True) -> None:
         """
         Get model from parameters.
 
@@ -162,25 +133,66 @@ class ModelLogger(ABC):
         if save_init:
             self.save('0')
 
-    def load_model(self, *suffix, model=None, map_location='cpu'):
+    def load(self, *suffix, model: nn.Module=None, map_location='cpu') -> nn.Module:
         """
         Get model from file.
         """
         name = '_'.join((self.prefix,) + suffix)
         path = self.logger.path_join(name + '.pth')
 
-        if self.state_only:
+        if self.storage == 'state':
+            assert self.model is not None
             if model is None:
                 model = self.model
             state_dict = torch.load(path, map_location=map_location)
             model.load_state_dict(state_dict)
-        else:
+        elif self.storage in ['state_ram', 'state_gpu']:
+            assert self.model is not None
+            assert hasattr(self, 'model_mem')
+            if model is None:
+                model = self.model
+            model.load_state_dict(self.mem)
+            # model.to(map_location)
+        elif self.storage == 'model':
             model = torch.load(path, map_location=map_location)
+        elif self.storage in ['model_ram', 'model_gpu']:
+            model = copy.deepcopy(self.mem)
+            # model.to(map_location)
+
         return self.__set_model(model)
 
-    def get_last_epoch(self):
+    def save(self, *suffix) -> None:
         """
-        Get last saved model epoch.
+        Save model with given name string.
+        """
+        name = '_'.join((self.prefix,) + suffix)
+        path = self.logger.path_join(name + '.pth')
+
+        if self.storage == 'state':
+            torch.save(self.state_dict, path)
+        elif self.storage == 'model':
+            torch.save(self.model, path)
+        elif self.storage == 'state_gpu':
+            # Alternative way is to use BytesIO
+            if hasattr(self, 'mem'): del self.mem
+            self.mem = copy.deepcopy(self.state_dict)
+        elif self.storage == 'state_ram':
+            if hasattr(self, 'mem'): del self.mem
+            self.mem = copy.deepcopy(self.state_dict)
+            self.mem = {k: v.cpu() for k, v in self.mem.items()}
+        elif self.storage == 'model_gpu':
+            if hasattr(self, 'mem'): del self.mem
+            self.mem = copy.deepcopy(self.model)
+        elif self.storage == 'model_ram':
+            # TODO: reduce mem fro 2xmem(model) to mem(model)
+            if hasattr(self, 'mem'): del self.mem
+            device = next(self.model.parameters()).device
+            self.mem = copy.deepcopy(self.model.cpu())
+            self.model.to(device)
+
+    def get_last_epoch(self) -> int:
+        """
+        Get last saved model epoch. Useful for deciding load model path.
 
         Returns:
             int: number of last epoch
@@ -203,36 +215,8 @@ class ModelLogger(ABC):
                     last_epoch = this_epoch
         return last_epoch
 
-    def save(self, *suffix):
-        """
-        Save model with given name string.
-        """
-        name = '_'.join((self.prefix,) + suffix)
-        path = self.logger.path_join(name + '.pth')
-
-        if self.state_only:
-            torch.save(self.state_dict, path)
-        else:
-            torch.save(self.model, path)
-
-    def save_mem(self):
-        # save model to memory
-        if self.state_only:
-            # md = self.model.cpu().detach()
-            # self.model_mem = copy.deepcopy(md)
-            self.model_mem = copy.deepcopy(self.state_dict)
-        else:
-            self.model_mem = copy.deepcopy(self.model)
-
-    def load_mem(self):
-        # load model from memory
-        if self.state_only:
-            self.model.load_state_dict(self.model_mem)
-        else:
-            self.model = self.model_mem
-        return self.model
-
-    def save_epoch(self, epoch, period=1):
+    # ===== Save during training
+    def save_epoch(self, epoch: int, period: int=1) -> None:
         """
         Save model each epoch period.
 
@@ -243,25 +227,33 @@ class ModelLogger(ABC):
         if (epoch + 1) % period == 0:
             self.save(str(epoch+1))
 
-    def save_best(self, acc_curr, epoch=-1, print_log=True):
+    def save_best(self, score: float, epoch: int=-1,
+                  print_log: bool=False) -> int:
         """
-        Save model with best accuracy.
+        Save model if the current epoch is the best.
 
         Args:
-            acc_curr (int/float): Current accuracy.
+            acc_curr (float): Current metric.
+            epoch (int, optional): Current epoch. Defaults to -1.
+            print_log (bool, optional): Whether to print log line. Defaults to False.
+            compare_fn (callable, optional): Custom comparison function. Defaults to greater than.
+
+        Returns:
+            bool: If the current epoch is the best.
         """
-        is_best = False
-        if not hasattr(self, 'acc_best'):
-            self.acc_best = acc_curr
-            self.epoch_best = epoch
-            is_best = True
-        if acc_curr > self.acc_best:
-            self.acc_best = acc_curr
-            self.epoch_best = epoch
+        if self.is_best(score, epoch):
             self.save('best')
-            is_best = True
-
             if print_log:
-                self.logger.print('[best saved] accuracy: {:>.4f}'.format(self.acc_best))
+                self.logger.print('[best saved] {:>.4f}'.format(self.score_best))
+        return self.score_best
 
-        return is_best
+    def is_best(self, score: float, epoch: int=-1) -> bool:
+        res = (not hasattr(self, 'score_best'))
+        if res or self.cmp(score, self.score_best):
+            self.score_best = score
+            self.epoch_best = epoch
+            res = True
+        return res
+
+    def is_early_stop(self, epoch: int=-1) -> bool:
+        return epoch - self.epoch_best >= self.patience

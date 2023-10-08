@@ -3,6 +3,7 @@ import numpy as np
 import scipy.sparse as sp
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
+from typing import Optional, List
 
 
 NTRAIN_PER_CLASS = 20
@@ -10,13 +11,13 @@ NVAL_PER_CLASS = NTRAIN_PER_CLASS * 10
 
 
 # ====================
-def diag_sp(diag):
+def diag_sp(diag) -> sp.dia_matrix:
     """Diagonal array to scipy sparse diagonal matrix"""
     n = len(diag)
     return sp.dia_matrix((diag, [0]), shape=(n, n))
 
 
-def to_torch_sparse(x):
+def to_torch_sparse(x: sp.coo_matrix):
     import torch
     x = x.tocoo()
     shape = x.shape
@@ -102,7 +103,7 @@ def split_stratify(seed, n, n_train, n_val, labels):
 
 # ====================
 class DataProcess(object):
-    def __init__(self, name, path='../data/', rrz=0.5, seed=0) -> None:
+    def __init__(self, name: str, path: str='../data/', rrz: float=0.5, seed: int=0) -> None:
         super().__init__()
         self.name = name
         self.path = path
@@ -121,7 +122,6 @@ class DataProcess(object):
         self.query_path = self._get_path('query.txt')
         self.querytrain_path = self._get_path('query_train.txt')
         self.feats_path = self._get_path('feats.npy')
-        # self.featsnorm_path = self._get_path('feats_normt.npy')
         self.featsnorm_path = self._get_path(f'feats_normt_{self.rrz:g}.npy')
 
         self.adj_matrix = None
@@ -137,47 +137,55 @@ class DataProcess(object):
         return os.path.join(self.path, self.name, fname)
 
     @property
-    def n(self):
+    def n(self) -> int:
         if self._n:
             return self._n
-        if self.labels is None:
-            self.input(['labels'])
-        self._n = len(self.labels)      # Len return shape[0]
+        # 1. Use cache adj matrix
+        if self.adj_matrix is not None:
+            self._n = self.adj_matrix.shape[0]
+        # 2: Use attribute file
+        elif os.path.isfile(self._get_path('attribute.txt')):
+            with open(self._get_path('attribute.txt'), 'r') as attr_f:
+                nline = attr_f.readline().rstrip()
+            self._n = int(''.join(filter(str.isdigit, nline)))
+        # 3: Use label length | WARNING: incorrect for inductive dataset
+        elif self.labels is not None:
+            self._n = len(self.labels)
         return self._n
 
     @property
-    def n_train(self):
+    def n_train(self) -> int:
         return len(self.idx_train)
 
     @property
-    def n_val(self):
+    def n_val(self) -> int:
         return len(self.idx_val)
 
     @property
-    def n_test(self):
+    def n_test(self) -> int:
         return len(self.idx_test)
 
     @property
-    def m(self):
+    def m(self) -> int:
         if self._m:
             return self._m
-        # 1: use cache adj matrix
+        # 1: Use cache adj matrix
         if self.adj_matrix is not None:
-            self._m = len(self.adj_matrix.data)
-        # 2: use attribute file
+            self._m = self.adj_matrix.nnz
+        # 2: Use attribute file
         elif os.path.isfile(self._get_path('attribute.txt')):
             with open(self._get_path('attribute.txt'), 'r') as attr_f:
                 nline = attr_f.readline().rstrip()
                 mline = attr_f.readline().rstrip()
             self._m = int(''.join(filter(str.isdigit, mline)))
-        # 3: count by wc -l
+        # 3: Count by wc -l
         else:
             import subprocess
             self._m = int(subprocess.check_output(["wc", "-l", self.adjtxt_path]).split()[0])
         return self._m
 
     @property
-    def nfeat(self):
+    def nfeat(self) -> int:
         if self._nfeat:
             return self._nfeat
         if self.attr_matrix is None:
@@ -186,7 +194,7 @@ class DataProcess(object):
         return self._nfeat
 
     @property
-    def nclass(self):
+    def nclass(self) -> int:
         if self._nclass:
             return self._nclass
         if self.labels is None:
@@ -201,14 +209,14 @@ class DataProcess(object):
             self._nclass = self.labels.shape[1]
         return self._nclass
 
-    def __str__(self):
+    def __str__(self) -> str:
         s  = f"n={self.n}, m={self.m}, F={self.nfeat}, C={self.nclass} | "
         s += f"feat: {self.attr_matrix.shape}, label: {self.labels.shape} | "
         s += f"{self.n_train}/{self.n_val}/{self.n_test}="
         s += f"{self.n_train/self.n:0.2f}/{self.n_val/self.n:0.2f}/{self.n_test/self.n:0.2f}"
         return s
 
-    def calculate(self, lst):
+    def calculate(self, lst: List[str]) -> None:
         for key in lst:
             if key == 'deg':
                 assert self.adj_matrix is not None
@@ -249,6 +257,9 @@ class DataProcess(object):
                 self.role['tr'] = self.idx_train.tolist()
                 self.role['va'] = self.idx_val.tolist()
                 self.role['te'] = self.idx_test.tolist()
+            elif key == 'edge_idx':
+                self.edge_idx = self.adj_matrix.tocoo().copy()
+                self.edge_idx = np.vstack([self.edge_idx.row, self.edge_idx.col])
             elif key == 'attr_matrix_norm':
                 assert self.attr_matrix is not None
                 assert self.deg is not None
@@ -260,10 +271,11 @@ class DataProcess(object):
             else:
                 print("Key not exist: {}".format(key))
 
-    def input(self, lst):
+    def input(self, lst: List[str]) -> None:
         for key in lst:
             if key == 'adjnpz':
                 self.adj_matrix = sp.load_npz(self.adjnpz_path)
+                # assert self.adj_matrix.diagonal().sum() == 0, "adj_matrix error"
             elif key == 'adjtxt':
                 with open(self.adjtxt_path, 'r') as attr_f:
                     nline = attr_f.readline().rstrip()
@@ -275,10 +287,12 @@ class DataProcess(object):
                     (ones, (adjtxt[:, 0], adjtxt[:, 1])),
                     shape=(self.n, self.n))
                 self.adj_matrix = self.adj_matrix.tocsr()
+                # assert self.adj_matrix.diagonal().sum() == 0, "adj_matrix error"
             elif key == 'deg':
                 self.deg = dict(np.load(self.degree_path))['arr_0']
             elif key == 'labels':
                 self.labels = dict(np.load(self.labels_path, allow_pickle=True))['labels']
+                # assert (self.labels.dim()==2 and self.labels.shape[1]==1) or self.labels.dim()==1, "label shape error"
             elif key == 'idx_train':
                 self.idx_train = dict(np.load(self.labels_path, allow_pickle=True))['idx_train']
             elif key == 'idx_val':
@@ -292,7 +306,7 @@ class DataProcess(object):
             else:
                 print("Key not exist: {}".format(key))
 
-    def output(self, lst):
+    def output(self, lst: List[str]) -> None:
         for key in lst:
             if key == 'adjnpz':
                 self.adj_matrix = self.adj_matrix.tocsr()
@@ -326,6 +340,10 @@ class DataProcess(object):
                     for i in pl:
                         m = struct.pack('I', i)
                         f.write(m)
+            elif key == 'attribute':
+                with open(self._get_path("attribute.txt"), 'w') as f:
+                    f.write(f"n={self.n:d}\n")
+                    f.write(f"m={self.m:d}")
             elif key == 'deg':
                 np.savez_compressed(self.degree_path, self.deg)
             elif key in ['labels', 'idx_train', 'idx_val', 'idx_test']:
@@ -350,16 +368,14 @@ class DataProcess(object):
             elif key == 'attr_matrix_norm':
                 self.attr_matrix_norm = self.attr_matrix_norm.astype(np.float32, order='C')
                 np.save(self.featsnorm_path, self.attr_matrix_norm)
-            elif key == 'attribute':
-                with open(self._get_path("attribute.txt"), 'w') as f:
-                    f.write(f"n={self.n:d}\n")
-                    f.write(f"m={self.m:d}")
             else:
                 print("Key not exist: {}".format(key))
 
-    def output_split(self, attr_matrix, spt=10, name='feats'):
+    def output_split(self, attr_matrix: Optional[np.ndarray], spt: int=10, name: str='feats') -> None:
         """Split large matrix by feature dimension."""
         from tqdm import trange
+        if attr_matrix is None:
+            attr_matrix = self.attr_matrix
         n = attr_matrix.shape[0]
         nd = n // spt
         for i in trange(spt):
@@ -372,7 +388,7 @@ class DataProcess(object):
             prt_path = self._get_path('{}_{}.npy'.format(name, i))
             np.save(prt_path, prt)
 
-    def to_undirected(self):
+    def to_undirected(self) -> None:
         self.adj_matrix = self.adj_matrix.tocoo()
         row, col = self.adj_matrix.row, self.adj_matrix.col
         row, col = np.concatenate([row, col], axis=0), np.concatenate([col, row], axis=0)
@@ -382,7 +398,9 @@ class DataProcess(object):
             shape=(self.n, self.n))
         self.adj_matrix = self.adj_matrix.tocsr()
         self.adj_matrix.setdiag(0)
-        self.adj_matrix[self.adj_matrix > 0] = 1
+        self.adj_matrix.eliminate_zeros()
+        self.adj_matrix.data = np.ones(len(self.adj_matrix.data), dtype=np.int8)
+        self._m = self.adj_matrix.nnz
 
         self.calculate(['deg'])
         idx_zero = np.where(self.deg == 0)[0]
@@ -390,9 +408,47 @@ class DataProcess(object):
             print(f"Warning: {len(idx_zero)} isolated nodes found: {idx_zero}!")
 
 
+class DataProcess_inductive(DataProcess):
+    """ Inductive processor for generating adj and attr of only train nodes
+    For graphs with edge attributes refer to pyg.utils.subgraph
+    """
+    def  __init__(self, name: str, path: str = '../data/', rrz: float = 0.5, seed: int = 0) -> None:
+        name = name + '_train'
+        super().__init__(name, path, rrz, seed)
+
+    def fetch(self) -> None:
+        # Node index mapping
+        assert self.adj_matrix is not None
+        assert self.idx_train is not None
+        nraw = self.adj_matrix.shape[0]
+        ntrain = self.n_train
+        mapping = - np.ones(nraw, dtype=int)   # key: old index, value: 0~ntrain-1
+        mapping[self.idx_train] = np.arange(ntrain)
+
+        # Construct induced adj
+        self.adj_matrix = self.adj_matrix.tocoo()
+        idx_in = np.isin(self.adj_matrix.col, self.idx_train) & np.isin(self.adj_matrix.row, self.idx_train)
+        col, row = mapping[self.adj_matrix.col[idx_in]], mapping[self.adj_matrix.row[idx_in]]
+        ones = np.ones(len(col), dtype=np.int8)
+        self.adj_matrix = sp.coo_matrix(
+            (ones, (col, row)),
+            shape=(ntrain, ntrain))
+
+        self.adj_matrix = self.adj_matrix.tocsr()
+        self.adj_matrix.setdiag(0)
+        self.adj_matrix.eliminate_zeros()
+        self.adj_matrix.data = np.ones(len(self.adj_matrix.data), dtype=np.int8)
+        self._n, self._m = ntrain, self.adj_matrix.nnz
+
+        # Construct induced attr
+        assert self.attr_matrix is not None
+        self.attr_matrix = self.attr_matrix[self.idx_train]
+        self.attr_matrix = self.attr_matrix.astype(np.float32, order='C')
+
+
 if __name__ == '__main__':
-    processor = DataProcess('pubmed', seed=0)
-    processor.input(['adjtxt', 'attr_matrix', 'labels'])
-    processor.calculate(['deg', 'idx_train', 'attr_matrix_norm'])
-    processor.output(['deg', 'query', 'attr_matrix_norm'])
-    print(processor)
+    dp = DataProcess('pubmed', seed=0)
+    dp.input(['adjtxt', 'attr_matrix', 'labels'])
+    dp.calculate(['deg', 'idx_train'])
+    dp.output(['deg', 'query'])
+    print(dp)

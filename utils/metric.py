@@ -42,11 +42,13 @@ class Stopwatch:
         self.start_time = time.time()
 
     def pause(self) -> float:
+        """Pause clocking and return elapsed time"""
         self.elapsed_sec += time.time() - self.start_time
         self.start_time = None
         return self.elapsed_sec
 
     def lap(self) -> float:
+        """No pausing, return elapsed time"""
         return time.time() - self.start_time + self.elapsed_sec
 
     def reset(self):

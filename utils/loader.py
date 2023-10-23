@@ -9,8 +9,8 @@ import torch
 from .data_processor import DataProcess, DataProcess_inductive
 
 
-def load_edgelist(datastr: str, datapath: str,
-                   inductive: bool, multil: bool,
+def load_edgelist(datastr: str, datapath: str="./data/",
+                   inductive: bool=False, multil: bool=False,
                    seed: int=0, **kwargs):
     # Inductive or transductive data processor
     dp = DataProcess(datastr, path=datapath, seed=seed)

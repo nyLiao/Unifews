@@ -9,7 +9,7 @@ import torch.optim as optim
 from utils.logger import Logger, ModelLogger, prepare_opt
 from utils.loader import load_edgelist
 import utils.metric as metric
-import model
+import models
 
 
 np.set_printoptions(linewidth=160, edgeitems=5, threshold=20,
@@ -35,8 +35,6 @@ logger = Logger(args.data, args.algo, flag_run=flag_run)
 if args.seed > 7:
     print(args.toDict())
     logger.save_opt(args)
-else:
-    print(args.chn.toDict())
 model_logger = ModelLogger(logger, patience=args.patience, cmp='max',
                            prefix='model'+args.suffix, storage='model_gpu')
 stopwatch = metric.Stopwatch()
@@ -45,8 +43,8 @@ stopwatch = metric.Stopwatch()
 adj, feat, labels, idx, nfeat, nclass = load_edgelist(datastr=args.data, datapath=args.path,
                 inductive=args.inductive, multil=args.multil, seed=args.seed)
 
-model = model.GCNThr(nlayer=args.layer, nfeat=nfeat, nhidden=args.hidden, nclass=nclass,
-                     dropout=args.dropout, apply_thr=True)
+model = models.GNNThr(nlayer=args.layer, nfeat=nfeat, nhidden=args.hidden, nclass=nclass,
+                    dropout=args.dropout, layer=args.algo)
 # if args.seed == 7:
 #     print(type(model).__name__)
 if args.seed > 7:
@@ -141,7 +139,7 @@ torch.cuda.empty_cache()
 acc_test, time_test, outl, labl = eval(x=feat['test'], edge_idx=adj['test'],
                                        y=labels['test'], idx_split=idx['test'])
 
-if args.seed >= 7:
+if args.seed >= 6:
     mem_ram, mem_cuda = metric.get_ram(), metric.get_cuda_mem(args.dev)
     print(f"[Val] best acc: {acc_best:0.4f}, [Test] best acc: {acc_test:0.4f}", flush=True)
     # print(f"[Train] time cost: {time_train:0.4f}, Best epoch: {conv_epoch}, Epoch avg: {time_train*1000 / (epoch+1):0.1f}")

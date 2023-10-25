@@ -1,56 +1,16 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch_geometric.nn as pyg_nn
 from torch_geometric.nn.conv.gcn_conv import *
-import torch.nn.utils.prune as prune
-
 
 from utils.logger import ThrLayerLogger
-
-
-def prune_threshold(x, threshold=1e-3):
-    idx_0 = torch.norm(x, dim=1)/x.shape[1] < threshold
-    x[idx_0] = 0
-    return x, idx_0
-
-
-def prune_topk(x, k=0.2):
-    num_0 = int(x.shape[0] * k)
-    x_norm = torch.norm(x, dim=1)
-    _, idx_0 = torch.topk(x_norm, num_0)
-    x[idx_0] = 0
-    return x, idx_0
-
-
-class ThrInPruningMethod(prune.BasePruningMethod):
-    """Prune by input-dimension thresholding.
-    """
-    PRUNING_TYPE = 'unstructured'
-    def __init__(self, threshold):
-        """Args:
-            threshold (Tensor [F_in]): threshold for each input channel
-        """
-        self.threshold = threshold
-
-    def compute_mask(self, t, default_mask):
-        """Args:
-            t (Tensor [F_out, F_in]): tensor to prune
-        """
-        assert self.threshold.shape == t.shape[1:]
-        mask = default_mask.clone()
-        mask[t.abs() < self.threshold] = 0
-        return mask
-
-    @classmethod
-    def apply(cls, module, name, threshold):
-        return super().apply(module, name, threshold=threshold)
+from prunes import ThrInPruningMethod, prune
 
 
 class GCNConvThr(pyg_nn.GCNConv):
     def __init__(self, *args, **kwargs):
         super(GCNConvThr, self).__init__(*args, **kwargs)
-        self.threshold_a = 4e-3
+        self.threshold_a = 2e-3
         self.threshold_w = 1e-4
         self.idx_keep = None
         self.logger_a = ThrLayerLogger()
@@ -123,6 +83,9 @@ class GCNConvThr(pyg_nn.GCNConv):
 
     def forward(self, x: Tensor, edge_index: Adj,
                 edge_weight: OptTensor = None, node_lock: OptTensor = None):
+        """Args:
+            x (Tensor [n, F_in]): node feature matrix
+        """
         if self.normalize:
             if isinstance(edge_index, Tensor):
                 cache = self._cached_edge_index
@@ -147,12 +110,16 @@ class GCNConvThr(pyg_nn.GCNConv):
                     edge_index = cache
 
         if self.training:
+            '''Shape:
+                threshold_wi [F_in]
+                self.lin.weight [F_out, F_in]
+            '''
             threshold_wi = self.threshold_w / (torch.norm(x, dim=0)/x.shape[0])
             ThrInPruningMethod.apply(self.lin, 'weight', threshold_wi)
             x = self.lin(x)
 
-            self.logger_w.nele_before = self.lin.weight.numel()
-            self.logger_w.nele_after = torch.sum(self.lin.weight != 0).item()
+            self.logger_w.numel_before = self.lin.weight.numel()
+            self.logger_w.numel_after = torch.sum(self.lin.weight != 0).item()
         else:
             x = self.lin(x)
             if prune.is_pruned(self.lin):
@@ -167,8 +134,8 @@ class GCNConvThr(pyg_nn.GCNConv):
             out = out + self.bias
 
         if self.training:
-            self.logger_a.nele_before = edge_index.shape[1]
-            self.logger_a.nele_after = self.idx_keep.shape[0]
+            self.logger_a.numel_before = edge_index.shape[1]
+            self.logger_a.numel_after = self.idx_keep.shape[0]
 
             edge_index = edge_index[:, self.idx_keep]
             if edge_weight is not None:
@@ -179,60 +146,28 @@ class GCNConvThr(pyg_nn.GCNConv):
         return out, edge_index
 
 
-class GCNThr(nn.Module):
-    def __init__(self, nlayer, nfeat, nhidden, nclass,
-                 dropout=0.5, apply_thr=True):
-        super(GCNThr, self).__init__()
+class GINConvRaw(pyg_nn.GINConv):
+    def __init__(self, in_channels: int, out_channels: int,
+                 eps: float = 0., train_eps: bool = False, **kwargs):
+        nn_default = pyg_nn.MLP(
+            [in_channels, out_channels],
+        )
+        super(GINConvRaw, self).__init__(nn_default, eps, train_eps, **kwargs)
 
-        cached = False
-        add_self_loops = True
-        improved = False
-        self.apply_thr = apply_thr
-        Conv = GCNConvThr if apply_thr else GCNConv
-        self.convs = nn.ModuleList()
-        self.convs.append(
-            Conv(nfeat, nhidden, cached=cached, normalize=True,
-                 add_self_loops=add_self_loops, improved=improved))
 
-        self.bns = nn.ModuleList()
-        self.bns.append(nn.BatchNorm1d(nhidden))
-        for _ in range(nlayer - 2):
-            self.convs.append(
-                Conv(nhidden, nhidden, cached=cached, normalize=True,
-                     add_self_loops=add_self_loops, improved=improved))
-            self.bns.append(nn.BatchNorm1d(nhidden))
+class GATv2ConvRaw(pyg_nn.GATv2Conv):
+    def __init__(self, in_channels: int, out_channels: int, depth: int,
+                 heads: int = 1, concat: bool = True, **kwargs):
+        heads = 1 if depth == 0 else heads
+        concat = (depth > 0)
+        if concat:
+            out_channels = out_channels // heads
+        super(GATv2ConvRaw, self).__init__(in_channels, out_channels, heads, concat, **kwargs)
 
-        self.convs.append(
-            Conv(nhidden, nclass, cached=cached, normalize=True,
-                 add_self_loops=add_self_loops, improved=improved))
 
-        self.dropout = dropout
-        self.activation = F.relu
-        self.use_bn = True
-
-    def reset_parameters(self):
-        for conv in self.convs:
-            conv.reset_parameters()
-        for bn in self.bns:
-            bn.reset_parameters()
-
-    def forward(self, x, edge_idx, node_lock=[]):
-        if self.apply_thr:
-            # Layer inheritence of edge_idx
-            for i, conv in enumerate(self.convs[:-1]):
-                x, edge_idx = conv(x, edge_idx, node_lock=node_lock)
-                if self.use_bn:
-                    x = self.bns[i](x)
-                x = self.activation(x)
-                x = F.dropout(x, p=self.dropout, training=self.training)
-            x, _ = self.convs[-1](x, edge_idx, node_lock=node_lock)
-            return x
-        else:
-            for i, conv in enumerate(self.convs[:-1]):
-                x = conv(x, edge_idx)
-                if self.use_bn:
-                    x = self.bns[i](x)
-                x = self.activation(x)
-                x = F.dropout(x, p=self.dropout, training=self.training)
-            x = self.convs[-1](x, edge_idx)
-            return x
+layer_dict = {
+    'gcn': pyg_nn.GCNConv,
+    'gcn_thr': GCNConvThr,
+    'gin': GINConvRaw,
+    'gat': GATv2ConvRaw,
+}

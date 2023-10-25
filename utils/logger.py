@@ -262,9 +262,9 @@ class ModelLogger(object):
 class ThrLayerLogger(object):
     def __init__(self):
         self.thr = None
-        self.nele_before = None
-        self.nele_after = None
+        self.numel_before = None
+        self.numel_after = None
 
     def __str__(self) -> str:
-        s = f"{self.nele_after}/{self.nele_before} ({1-self.nele_after/self.nele_before:6.2%})"
+        s = f"{self.numel_after}/{self.numel_before} ({1-self.numel_after/self.numel_before:6.2%})"
         return s

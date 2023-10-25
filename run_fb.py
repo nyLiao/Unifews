@@ -59,14 +59,14 @@ scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', fa
 loss_fn = nn.BCEWithLogitsLoss() if args.multil else nn.CrossEntropyLoss()
 
 
-def train(x, edge_idx, y, idx_split):
+def train(x, edge_idx, y, idx_split, verbose=False):
     model.train()
     x, edge_idx, y = x.cuda(args.dev), edge_idx.cuda(args.dev), y.cuda(args.dev)
     stopwatch.reset()
 
     stopwatch.start()
     optimizer.zero_grad()
-    output = model(x, edge_idx, node_lock=[])[idx_split]
+    output = model(x, edge_idx, node_lock=torch.Tensor([]), verbose=verbose)[idx_split]
     loss = loss_fn(output, y)
     loss.backward()
     optimizer.step()
@@ -75,7 +75,7 @@ def train(x, edge_idx, y, idx_split):
     return loss.item(), stopwatch.time
 
 
-def eval(x, edge_idx, y, idx_split):
+def eval(x, edge_idx, y, idx_split, verbose=False):
     model.eval()
     x, edge_idx, y = x.cuda(args.dev), edge_idx.cuda(args.dev), y.cuda(args.dev)
     calc = metric.F1Calculator(nclass)
@@ -85,7 +85,7 @@ def eval(x, edge_idx, y, idx_split):
 
     with torch.no_grad():
         stopwatch.start()
-        output = model(x, edge_idx, node_lock=idx_split)[idx_split]
+        output = model(x, edge_idx, node_lock=idx_split, verbose=verbose)[idx_split]
         stopwatch.pause()
 
         output = output.cpu().detach()
@@ -112,7 +112,8 @@ conv_epoch, acc_best = 0, 0
 
 for epoch in range(args.epochs):
     loss_train, time_epoch = train(x=feat['train'], edge_idx=adj['train'],
-                                   y=labels['train'], idx_split=idx['train'])
+                                   y=labels['train'], idx_split=idx['train'],
+                                   verbose=(args.seed >= 7))
     time_train += time_epoch
     acc_val, _, _, _ = eval(x=feat['train'], edge_idx=adj['train'],
                             y=labels['val'], idx_split=idx['val'])

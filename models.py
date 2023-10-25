@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -18,6 +19,7 @@ kwargs_default = {
     'gat': {
         'heads': 8,
         'concat': True,
+        'add_self_loops': True,
     },
 }
 
@@ -54,16 +56,16 @@ class GNNThr(nn.Module):
         for norm in self.norms:
             norm.reset_parameters()
 
-    def forward(self, x, edge_idx, node_lock=[]):
+    def forward(self, x, edge_idx, node_lock=torch.Tensor([]), verbose=False):
         if self.apply_thr:
             # Layer inheritence of edge_idx
             for i, conv in enumerate(self.convs[:-1]):
-                x, edge_idx = conv(x, edge_idx, node_lock=node_lock)
+                x, edge_idx = conv(x, edge_idx, node_lock=node_lock, verbose=verbose)
                 if self.use_bn:
                     x = self.norms[i](x)
                 x = self.act(x)
                 x = self.dropout(x)
-            x, _ = self.convs[-1](x, edge_idx, node_lock=node_lock)
+            x, _ = self.convs[-1](x, edge_idx, node_lock=node_lock, verbose=verbose)
             return x
         else:
             for i, conv in enumerate(self.convs[:-1]):

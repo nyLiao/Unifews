@@ -19,9 +19,9 @@ torch.set_printoptions(linewidth=160, edgeitems=5)
 # ========== Training settings
 parser = argparse.ArgumentParser()
 parser.add_argument('-f', '--seed', type=int, default=7, help='Random seed.')
-parser.add_argument('-c', '--config', default='./config/cora.json', help='Config file path.')
+parser.add_argument('-c', '--config', type=str, default='./config/cora.json', help='Config file path.')
 parser.add_argument('-v', '--dev', type=int, default=0, help='Device id.')
-parser.add_argument('-n', '--suffix', default='', help='Save name suffix')
+parser.add_argument('-n', '--suffix', type=str, default='', help='Save name suffix')
 args = prepare_opt(parser)
 
 random.seed(args.seed)
@@ -45,8 +45,8 @@ stopwatch = metric.Stopwatch()
 adj, feat, labels, idx, nfeat, nclass = load_edgelist(datastr=args.data, datapath=args.path,
                 inductive=args.inductive, multil=args.multil, seed=args.seed)
 
-model = model.GCN(nlayer=args.layer, nfeat=nfeat, nhidden=args.hidden, nclass=nclass,
-                  dropout=args.dropout)
+model = model.GCNThr(nlayer=args.layer, nfeat=nfeat, nhidden=args.hidden, nclass=nclass,
+                     dropout=args.dropout, apply_thr=True)
 # if args.seed == 7:
 #     print(type(model).__name__)
 if args.seed > 7:
@@ -61,14 +61,14 @@ scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', fa
 loss_fn = nn.BCEWithLogitsLoss() if args.multil else nn.CrossEntropyLoss()
 
 
-def train(x, edge_idx, y, idx_split, prune):
+def train(x, edge_idx, y, idx_split):
     model.train()
     x, edge_idx, y = x.cuda(args.dev), edge_idx.cuda(args.dev), y.cuda(args.dev)
     stopwatch.reset()
 
     stopwatch.start()
     optimizer.zero_grad()
-    output = model(x, edge_idx, prune=prune)[idx_split]
+    output = model(x, edge_idx, node_lock=[])[idx_split]
     loss = loss_fn(output, y)
     loss.backward()
     optimizer.step()
@@ -77,15 +77,17 @@ def train(x, edge_idx, y, idx_split, prune):
     return loss.item(), stopwatch.time
 
 
-def eval(x, edge_idx, y, idx_split, prune):
+def eval(x, edge_idx, y, idx_split):
     model.eval()
     x, edge_idx, y = x.cuda(args.dev), edge_idx.cuda(args.dev), y.cuda(args.dev)
     calc = metric.F1Calculator(nclass)
     stopwatch.reset()
+    # n = feat['train'].shape[0]
+    # node_lock = torch.LongTensor(np.arange(n))
 
     with torch.no_grad():
         stopwatch.start()
-        output = model(x, edge_idx, prune=prune)[idx_split]
+        output = model(x, edge_idx, node_lock=idx_split)[idx_split]
         stopwatch.pause()
 
         output = output.cpu().detach()
@@ -112,12 +114,10 @@ conv_epoch, acc_best = 0, 0
 
 for epoch in range(args.epochs):
     loss_train, time_epoch = train(x=feat['train'], edge_idx=adj['train'],
-                                   y=labels['train'], idx_split=idx['train'],
-                                   prune=(epoch >= 0))
+                                   y=labels['train'], idx_split=idx['train'])
     time_train += time_epoch
     acc_val, _, _, _ = eval(x=feat['train'], edge_idx=adj['train'],
-                            y=labels['val'], idx_split=idx['val'],
-                            prune=True)
+                            y=labels['val'], idx_split=idx['val'])
     # acc_val = epoch
     scheduler.step(acc_val)
 
@@ -127,8 +127,8 @@ for epoch in range(args.epochs):
         # logger.print(res)
     # Early stop if converge
     acc_best = model_logger.save_best(acc_val, epoch=epoch)
+    conv_epoch = epoch + 1
     if model_logger.is_early_stop(epoch=epoch):
-        conv_epoch = epoch
         break
 
 # ========== Test
@@ -138,13 +138,12 @@ if args.dev >= 0:
     model = model.cuda(args.dev)
 torch.cuda.empty_cache()
 
-acc_test, time_inf, outl, labl = eval(x=feat['test'], edge_idx=adj['test'],
-                                      y=labels['test'], idx_split=idx['test'],
-                                      prune=False)
+acc_test, time_test, outl, labl = eval(x=feat['test'], edge_idx=adj['test'],
+                                       y=labels['test'], idx_split=idx['test'])
 
 if args.seed >= 7:
     mem_ram, mem_cuda = metric.get_ram(), metric.get_cuda_mem(args.dev)
     print(f"[Val] best acc: {acc_best:0.4f}, [Test] best acc: {acc_test:0.4f}", flush=True)
-    print(f"[Train] time cost: {time_train:0.4f}, Best epoch: {conv_epoch}, Epoch avg: {time_train*1000 / (epoch+1):0.1f}")
-    print(f"[Test]  time cost: {time_inf:0.4f}, eval time: {time_inf:0.4f}, RAM: {mem_ram / 2**20:.3f} GB, CUDA: {mem_cuda / 2**30:.3f} GB")
+    # print(f"[Train] time cost: {time_train:0.4f}, Best epoch: {conv_epoch}, Epoch avg: {time_train*1000 / (epoch+1):0.1f}")
+    # print(f"[Test]  time cost: {time_test:0.4f}, RAM: {mem_ram / 2**20:.3f} GB, CUDA: {mem_cuda / 2**30:.3f} GB")
     # print(f"Num params (M): {metric.get_num_params(model):0.4f}, Mem params (MB): {metric.get_mem_params(model):0.4f}")

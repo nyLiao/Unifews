@@ -257,3 +257,14 @@ class ModelLogger(object):
 
     def is_early_stop(self, epoch: int=-1) -> bool:
         return epoch - self.epoch_best >= self.patience
+
+
+class ThrLayerLogger(object):
+    def __init__(self):
+        self.thr = None
+        self.nele_before = None
+        self.nele_after = None
+
+    def __str__(self) -> str:
+        s = f"{self.nele_after}/{self.nele_before} ({1-self.nele_after/self.nele_before:6.2%})"
+        return s

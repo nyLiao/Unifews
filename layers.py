@@ -5,17 +5,18 @@ from torch_geometric.nn.conv.gcn_conv import *
 from torch_geometric.nn.conv.gatv2_conv import *
 
 from utils.logger import ThrLayerLogger
-from prunes import ThrInPruningMethod, prune
+from prunes import ThrInPrune, prune
 
 
 class GCNConvThr(pyg_nn.GCNConv):
     def __init__(self, *args, **kwargs):
         super(GCNConvThr, self).__init__(*args, **kwargs)
         self.threshold_a = 2e-3
-        self.threshold_w = 1e-4
+        self.threshold_w = 1e-2
         self.idx_keep = None
         self.logger_a = ThrLayerLogger()
         self.logger_w = ThrLayerLogger()
+        self.prune_lst = [self.lin]
 
         # self.register_propagate_forward_pre_hook(self.prune_edge)
         self.register_message_forward_hook(self.get_edge_rm)
@@ -101,7 +102,6 @@ class GCNConvThr(pyg_nn.GCNConv):
                         self._cached_edge_index = (edge_index, edge_weight)
                 else:
                     edge_index, edge_weight = cache[0], cache[1]
-
             elif isinstance(edge_index, SparseTensor):
                 cache = self._cached_adj_t
                 if cache is None:
@@ -119,16 +119,16 @@ class GCNConvThr(pyg_nn.GCNConv):
                 threshold_wi [F_in]
                 self.lin.weight [F_out, F_in]
             '''
-            threshold_wi = self.threshold_w / (torch.norm(x, dim=0)/x.shape[0])
-            ThrInPruningMethod.apply(self.lin, 'weight', threshold_wi)
+            threshold_wi = self.threshold_w / torch.norm(x, dim=0)
+            ThrInPrune.apply(self.lin, 'weight', threshold_wi)
             x = self.lin(x)
 
             self.logger_w.numel_before = self.lin.weight.numel()
             self.logger_w.numel_after = torch.sum(self.lin.weight != 0).item()
         else:
             x = self.lin(x)
-            if prune.is_pruned(self.lin):
-                prune.remove(self.lin, 'weight')
+            # if prune.is_pruned(self.lin):
+            #     prune.remove(self.lin, 'weight')
 
         self.idx_lock = torch.where(edge_index[1].unsqueeze(0) == node_lock.to(edge_index.device).unsqueeze(1))[1]
         # propagate_type: (x: Tensor, edge_weight: OptTensor)
@@ -170,6 +170,7 @@ class GATv2ConvRaw(pyg_nn.GATv2Conv):
         if concat:
             out_channels = out_channels // heads
         super(GATv2ConvRaw, self).__init__(in_channels, out_channels, heads, concat, **kwargs)
+        self.prune_lst = [self.lin_l, self.lin_r]
 
 
 class GATv2ConvThr(GATv2ConvRaw):
@@ -192,8 +193,8 @@ class GATv2ConvThr(GATv2ConvRaw):
         # Weight pruning
         if self.training:
             threshold_wi = self.threshold_w / (torch.norm(x, dim=0)/x.shape[0])
-            ThrInPruningMethod.apply(self.lin_l, 'weight', threshold_wi)
-            ThrInPruningMethod.apply(self.lin_r, 'weight', threshold_wi)
+            ThrInPrune.apply(self.lin_l, 'weight', threshold_wi)
+            ThrInPrune.apply(self.lin_r, 'weight', threshold_wi)
 
             x_l = self.lin_l(x).view(-1, H, C)
             x_r = x_l if self.share_weights else self.lin_r(x).view(-1, H, C)
@@ -204,9 +205,9 @@ class GATv2ConvThr(GATv2ConvRaw):
             x_l = self.lin_l(x).view(-1, H, C)
             x_r = x_l if self.share_weights else self.lin_r(x).view(-1, H, C)
 
-            if prune.is_pruned(self.lin_l):
-                prune.remove(self.lin_l, 'weight')
-                prune.remove(self.lin_r, 'weight')
+            # if prune.is_pruned(self.lin_l):
+            #     prune.remove(self.lin_l, 'weight')
+            #     prune.remove(self.lin_r, 'weight')
 
         if self.add_self_loops:
             if isinstance(edge_index, Tensor):

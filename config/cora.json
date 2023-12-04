@@ -1,9 +1,9 @@
 {
     "data": "cora",
     "path": "./data/",
-    "algo": "gcn",
-    "epochs": 30,
-    "patience": 5,
+    "algo": "gcn_thr",
+    "epochs": 20,
+    "patience": 50,
     "batch": 64,
     "lr": 0.001,
     "weight_decay": 1e-5,

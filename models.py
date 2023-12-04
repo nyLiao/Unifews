@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.nn.utils.prune as prune
 
 from layers import layer_dict
 
@@ -22,6 +23,15 @@ kwargs_default = {
         'add_self_loops': True,
     },
 }
+
+
+def state2module(model, param_name):
+    parts = param_name.split('.')
+    module = model
+    for part in parts[:-1]:
+        module = getattr(module, part)
+    return module
+
 
 class GNNThr(nn.Module):
     def __init__(self, nlayer, nfeat, nhidden, nclass,
@@ -49,6 +59,12 @@ class GNNThr(nn.Module):
             self.convs.append(Conv(nhidden, nhidden, depth=nlayer-layer, **kwargs))
             self.norms.append(nn.BatchNorm1d(nhidden))
         self.convs.append(Conv(nhidden, nclass, depth=0, **kwargs))
+
+    def remove(self):
+        for conv in self.convs:
+            if hasattr(conv, 'prune_lst'):
+                for module in conv.prune_lst:
+                    prune.remove(module, 'weight')
 
     def reset_parameters(self):
         for conv in self.convs:

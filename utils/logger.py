@@ -148,9 +148,11 @@ class ModelLogger(object):
             model.load_state_dict(state_dict)
         elif self.storage in ['state_ram', 'state_gpu']:
             assert self.model is not None
-            assert hasattr(self, 'model_mem')
+            assert hasattr(self, 'mem')
             if model is None:
                 model = self.model
+            if hasattr(self.model, 'remove'):
+                self.model.remove()
             model.load_state_dict(self.mem)
             # model.to(map_location)
         elif self.storage == 'model':

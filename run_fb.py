@@ -36,7 +36,7 @@ if args.seed > 7:
     print(args.toDict())
     logger.save_opt(args)
 model_logger = ModelLogger(logger, patience=args.patience, cmp='max',
-                           prefix='model'+args.suffix, storage='model_gpu')
+                           prefix='model'+args.suffix, storage='state_gpu')
 stopwatch = metric.Stopwatch()
 
 # ========== Load
@@ -111,16 +111,17 @@ time_train = 0
 conv_epoch, acc_best = 0, 0
 
 for epoch in range(args.epochs):
+    verbose = (epoch+1) % 5 == 0 and (args.seed >= 7)
     loss_train, time_epoch = train(x=feat['train'], edge_idx=adj['train'],
                                    y=labels['train'], idx_split=idx['train'],
-                                   verbose=(args.seed >= 7))
+                                   verbose=verbose)
     time_train += time_epoch
     acc_val, _, _, _ = eval(x=feat['train'], edge_idx=adj['train'],
                             y=labels['val'], idx_split=idx['val'])
     # acc_val = epoch
     scheduler.step(acc_val)
 
-    if (epoch+1) % 1 == 0 and (args.seed >= 7):
+    if verbose:
         res = f"Epoch:{epoch:04d} | train loss:{loss_train:.4f}, val acc:{acc_val:.4f}, cost:{time_train:.4f}"
         print(res)
         # logger.print(res)

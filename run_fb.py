@@ -9,6 +9,7 @@ import torch.optim as optim
 from utils.logger import Logger, ModelLogger, prepare_opt
 from utils.loader import load_edgelist
 import utils.metric as metric
+from layers import identity_n_norm
 import models
 
 
@@ -20,7 +21,7 @@ torch.set_printoptions(linewidth=160, edgeitems=5)
 parser = argparse.ArgumentParser()
 parser.add_argument('-f', '--seed', type=int, default=7, help='Random seed.')
 parser.add_argument('-c', '--config', type=str, default='./config/cora.json', help='Config file path.')
-parser.add_argument('-v', '--dev', type=int, default=0, help='Device id.')
+parser.add_argument('-v', '--dev', type=int, default=1, help='Device id.')
 parser.add_argument('-n', '--suffix', type=str, default='', help='Save name suffix')
 args = prepare_opt(parser)
 
@@ -28,7 +29,8 @@ random.seed(args.seed)
 np.random.seed(args.seed)
 torch.manual_seed(args.seed)
 if args.dev >= 0:
-    torch.cuda.manual_seed(args.seed)
+    with torch.cuda.device(args.dev):
+        torch.cuda.manual_seed(args.seed)
 
 flag_run = str(args.seed)
 logger = Logger(args.data, args.algo, flag_run=flag_run)
@@ -45,6 +47,9 @@ adj, feat, labels, idx, nfeat, nclass = load_edgelist(datastr=args.data, datapat
 
 model = models.GNNThr(nlayer=args.layer, nfeat=nfeat, nhidden=args.hidden, nclass=nclass,
                     dropout=args.dropout, layer=args.algo)
+model.reset_parameters()
+adj['train'] = identity_n_norm(adj['train'], edge_weight=None, num_nodes=feat['train'].shape[0],
+                    rnorm=model.kwargs['rnorm'], diag=model.kwargs['diag'])
 # if args.seed == 7:
 #     print(type(model).__name__)
 if args.seed > 7:
@@ -61,7 +66,11 @@ loss_fn = nn.BCEWithLogitsLoss() if args.multil else nn.CrossEntropyLoss()
 
 def train(x, edge_idx, y, idx_split, verbose=False):
     model.train()
-    x, edge_idx, y = x.cuda(args.dev), edge_idx.cuda(args.dev), y.cuda(args.dev)
+    x, y = x.cuda(args.dev), y.cuda(args.dev)
+    if isinstance(edge_idx, tuple):
+        edge_idx = (edge_idx[0].cuda(args.dev), edge_idx[1].cuda(args.dev))
+    else:
+        edge_idx = edge_idx.cuda(args.dev)
     stopwatch.reset()
 
     stopwatch.start()
@@ -77,7 +86,11 @@ def train(x, edge_idx, y, idx_split, verbose=False):
 
 def eval(x, edge_idx, y, idx_split, verbose=False):
     model.eval()
-    x, edge_idx, y = x.cuda(args.dev), edge_idx.cuda(args.dev), y.cuda(args.dev)
+    x, y = x.cuda(args.dev), y.cuda(args.dev)
+    if isinstance(edge_idx, tuple):
+        edge_idx = (edge_idx[0].cuda(args.dev), edge_idx[1].cuda(args.dev))
+    else:
+        edge_idx = edge_idx.cuda(args.dev)
     calc = metric.F1Calculator(nclass)
     stopwatch.reset()
     # n = feat['train'].shape[0]
@@ -106,7 +119,8 @@ def eval(x, edge_idx, y, idx_split, verbose=False):
 # ========== Train
 # print('-' * 20, flush=True)
 # print('Start training...')
-torch.cuda.empty_cache()
+with torch.cuda.device(args.dev):
+    torch.cuda.empty_cache()
 time_train = 0
 conv_epoch, acc_best = 0, 0
 
@@ -136,8 +150,11 @@ for epoch in range(args.epochs):
 model = model_logger.load()
 if args.dev >= 0:
     model = model.cuda(args.dev)
-torch.cuda.empty_cache()
+with torch.cuda.device(args.dev):
+    torch.cuda.empty_cache()
 
+adj['test'] = identity_n_norm(adj['test'], edge_weight=None, num_nodes=feat['test'].shape[0],
+                    rnorm=model.kwargs['rnorm'], diag=model.kwargs['diag'])
 acc_test, time_test, outl, labl = eval(x=feat['test'], edge_idx=adj['test'],
                                        y=labels['test'], idx_split=idx['test'])
 

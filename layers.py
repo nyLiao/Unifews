@@ -5,7 +5,50 @@ from torch_geometric.nn.conv.gcn_conv import *
 from torch_geometric.nn.conv.gatv2_conv import *
 
 from utils.logger import ThrLayerLogger
-from prunes import ThrInPrune, prune
+from utils.prunes import ThrInPrune, prune
+
+
+def identity_n_norm(edge_index, edge_weight=None, num_nodes=None,
+                    rnorm=None, diag=1., dtype=torch.float32):
+    if isinstance(edge_index, SparseTensor):
+        assert edge_index.size(0) == edge_index.size(1)
+        if diag is not None:
+            edge_index = torch_sparse.fill_diag(edge_index, diag)
+        if rnorm is not None:
+            # TODO: r-norm
+            deg = torch_sparse.sum(adj_t, dim=1)
+            deg_inv_sqrt = deg.pow_(-0.5)
+            deg_inv_sqrt.masked_fill_(deg_inv_sqrt == float('inf'), 0.)
+            adj_t = torch_sparse.mul(adj_t, deg_inv_sqrt.view(-1, 1))
+            adj_t = torch_sparse.mul(adj_t, deg_inv_sqrt.view(1, -1))
+        return edge_index
+
+    if isinstance(edge_index, Tensor):
+        num_nodes = maybe_num_nodes(edge_index, num_nodes)
+        if diag is not None:
+            edge_index, edge_weight = add_remaining_self_loops(
+                edge_index, edge_weight, diag, num_nodes)
+        if rnorm is None:
+            if edge_weight is None:
+                return edge_index
+        else:
+            edge_weight = torch.ones((edge_index.size(1), ), dtype=dtype,
+                                     device=edge_index.device)
+            row, col = edge_index[0], edge_index[1]
+            idx = col
+            deg = scatter(edge_weight, idx, dim=0, dim_size=num_nodes, reduce='sum')
+            deg_inv_sqrt = deg.pow_(-0.5)
+            deg_inv_sqrt.masked_fill_(deg_inv_sqrt == float('inf'), 0)
+            edge_weight = deg_inv_sqrt[row] * edge_weight * deg_inv_sqrt[col]
+        return edge_index, edge_weight
+
+    raise NotImplementedError()
+
+# ==========
+class GCNConvRaw(pyg_nn.GCNConv):
+    def forward(self, x: Tensor, edge_tuple: Tuple, **kwargs):
+        (edge_index, edge_weight) = edge_tuple
+        return super().forward(x, edge_index, edge_weight)
 
 
 class GCNConvThr(pyg_nn.GCNConv):
@@ -58,10 +101,17 @@ class GCNConvThr(pyg_nn.GCNConv):
         '''
         # print(inputs, inputs[0]['x_j'].shape)
         # print(output, output.shape)
-        # print(output.view(-1).cpu().histogram(bins=20)[0], end=' ')
+        # ?: infer output much smaller
+        import numpy as np
+        hist, bins = output.view(-1).cpu().detach().histogram(bins=10)
+        hist = hist.numpy()/output.numel()
+        np.set_printoptions(precision=2, suppress=True, formatter={'float': '{: 0.2f}'.format})
+        print(f' % {hist}')
+        print(f' | {bins.numpy()}')
         # print(torch.norm(output, dim=1).cpu())
 
         # Edge pruning
+        # TODO: change to relative to x norm
         if self.training:
             mask_0 = torch.norm(output, dim=1)/output.shape[1] < self.threshold_a
             mask_0[self.idx_lock] = False
@@ -85,34 +135,12 @@ class GCNConvThr(pyg_nn.GCNConv):
     #     self._cached_edge_index = None
     #     self._cached_adj_t = None
 
-    def forward(self, x: Tensor, edge_index: Adj,
-                edge_weight: OptTensor = None,
+    def forward(self, x: Tensor, edge_tuple: Tuple,
                 node_lock: OptTensor = None, verbose: bool = False):
         """Args:
             x (Tensor [n, F_in]): node feature matrix
         """
-        if self.normalize:
-            if isinstance(edge_index, Tensor):
-                cache = self._cached_edge_index
-                if cache is None:
-                    edge_index, edge_weight = gcn_norm(  # yapf: disable
-                        edge_index, edge_weight, x.size(self.node_dim),
-                        self.improved, self.add_self_loops, self.flow, x.dtype)
-                    if self.cached:
-                        self._cached_edge_index = (edge_index, edge_weight)
-                else:
-                    edge_index, edge_weight = cache[0], cache[1]
-            elif isinstance(edge_index, SparseTensor):
-                cache = self._cached_adj_t
-                if cache is None:
-                    edge_index = gcn_norm(  # yapf: disable
-                        edge_index, edge_weight, x.size(self.node_dim),
-                        self.improved, self.add_self_loops, self.flow, x.dtype)
-                    if self.cached:
-                        self._cached_adj_t = edge_index
-                else:
-                    edge_index = cache
-
+        (edge_index, edge_weight) = edge_tuple
         # Weight pruning
         if self.training:
             '''Shape:
@@ -130,10 +158,14 @@ class GCNConvThr(pyg_nn.GCNConv):
             # if prune.is_pruned(self.lin):
             #     prune.remove(self.lin, 'weight')
 
+        # Lock edges ending at node_lock
         self.idx_lock = torch.where(edge_index[1].unsqueeze(0) == node_lock.to(edge_index.device).unsqueeze(1))[1]
+        # Lock self-loop edges
+        idx_diag = torch.where(edge_index[0] == edge_index[1])[0]
+        self.idx_lock = torch.cat((self.idx_lock, idx_diag))
+        self.idx_lock = torch.unique(self.idx_lock)
         # propagate_type: (x: Tensor, edge_weight: OptTensor)
-        out = self.propagate(edge_index, x=x, edge_weight=edge_weight,
-                             size=None)
+        out = self.propagate(edge_index, x=x, edge_weight=edge_weight, size=None)
 
         if self.bias is not None:
             out = out + self.bias
@@ -142,15 +174,13 @@ class GCNConvThr(pyg_nn.GCNConv):
         if self.training:
             self.logger_a.numel_before = edge_index.shape[1]
             self.logger_a.numel_after = self.idx_keep.shape[0]
-
-            edge_index = edge_index[:, self.idx_keep]
-            # if edge_weight is not None:
-            #     edge_weight = edge_weight[self.idx_keep]
-
             if verbose:
                 print(f"  A: {self.logger_a}, W: {self.logger_w}")
 
-        return out, edge_index
+            edge_index = edge_index[:, self.idx_keep]
+            edge_weight = edge_weight[self.idx_keep]
+
+        return out, (edge_index, edge_weight)
 
 
 class GINConvRaw(pyg_nn.GINConv):
@@ -177,7 +207,7 @@ class GATv2ConvThr(GATv2ConvRaw):
     def __init__(self, *args, **kwargs):
         super(GATv2ConvThr, self).__init__(*args, **kwargs)
         self.threshold_a = 5e-4
-        self.threshold_w = 2e-5
+        self.threshold_w = 1e-2
         self.idx_keep = None
         self.logger_a = ThrLayerLogger()
         self.logger_w = ThrLayerLogger()
@@ -185,6 +215,11 @@ class GATv2ConvThr(GATv2ConvRaw):
     def forward(self, x: Tensor, edge_index: Adj,
                 edge_attr: OptTensor = None,
                 node_lock: OptTensor = None, verbose: bool = False):
+        """Shape:
+            x: [n, F_in]
+            self.lin_l.weight: [F_out, F_in]
+            x_l: [n, H, F_out//H]
+        """
         H, C = self.heads, self.out_channels
         x_l: OptTensor = None
         x_r: OptTensor = None
@@ -192,10 +227,9 @@ class GATv2ConvThr(GATv2ConvRaw):
 
         # Weight pruning
         if self.training:
-            threshold_wi = self.threshold_w / (torch.norm(x, dim=0)/x.shape[0])
+            threshold_wi = self.threshold_w / torch.norm(x, dim=0)
             ThrInPrune.apply(self.lin_l, 'weight', threshold_wi)
             ThrInPrune.apply(self.lin_r, 'weight', threshold_wi)
-
             x_l = self.lin_l(x).view(-1, H, C)
             x_r = x_l if self.share_weights else self.lin_r(x).view(-1, H, C)
 
@@ -204,31 +238,18 @@ class GATv2ConvThr(GATv2ConvRaw):
         else:
             x_l = self.lin_l(x).view(-1, H, C)
             x_r = x_l if self.share_weights else self.lin_r(x).view(-1, H, C)
-
             # if prune.is_pruned(self.lin_l):
             #     prune.remove(self.lin_l, 'weight')
             #     prune.remove(self.lin_r, 'weight')
 
-        if self.add_self_loops:
-            if isinstance(edge_index, Tensor):
-                num_nodes = x_l.size(0)
-                if x_r is not None:
-                    num_nodes = min(num_nodes, x_r.size(0))
-                edge_index, edge_attr = remove_self_loops(
-                    edge_index, edge_attr)
-                edge_index, edge_attr = add_self_loops(
-                    edge_index, edge_attr, fill_value=self.fill_value,
-                    num_nodes=num_nodes)
-            elif isinstance(edge_index, SparseTensor):
-                if self.edge_dim is None:
-                    edge_index = torch_sparse.set_diag(edge_index)
-                else:
-                    raise NotImplementedError()
-
+        # Lock edges ending at node_lock
         self.idx_lock = torch.where(edge_index[1].unsqueeze(0) == node_lock.to(edge_index.device).unsqueeze(1))[1]
+        # Lock self-loop edges
+        idx_diag = torch.where(edge_index[0] == edge_index[1])[0]
+        self.idx_lock = torch.cat((self.idx_lock, idx_diag))
+        self.idx_lock = torch.unique(self.idx_lock)
         # propagate_type: (x: PairTensor, edge_attr: OptTensor)
-        out = self.propagate(edge_index, x=(x_l, x_r), edge_attr=edge_attr,
-                             size=None)
+        out = self.propagate(edge_index, x=(x_l, x_r), edge_attr=edge_attr, size=None)
 
         alpha = self._alpha
         assert alpha is not None
@@ -245,13 +266,12 @@ class GATv2ConvThr(GATv2ConvRaw):
         if self.training:
             self.logger_a.numel_before = edge_index.shape[1]
             self.logger_a.numel_after = self.idx_keep.shape[0]
+            if verbose:
+                print(f"  A: {self.logger_a}, W: {self.logger_w}")
 
             edge_index = edge_index[:, self.idx_keep]
             # if edge_attr is not None:
             #     edge_attr = edge_attr[self.idx_keep]
-
-            if verbose:
-                print(f"  A: {self.logger_a}, W: {self.logger_w}")
 
         return out, edge_index
 
@@ -291,7 +311,7 @@ class GATv2ConvThr(GATv2ConvRaw):
 
 
 layer_dict = {
-    'gcn': pyg_nn.GCNConv,
+    'gcn': GCNConvRaw,
     'gcn_thr': GCNConvThr,
     'gin': GINConvRaw,
     'gat': GATv2ConvRaw,

@@ -1,0 +1,15 @@
+{
+    "data": "citeseer",
+    "path": "./data/",
+    "algo": "gcn_thr",
+    "epochs": 100,
+    "patience": 50,
+    "batch": 64,
+    "lr": 0.0002,
+    "weight_decay": 1e-5,
+    "layer": 3,
+    "hidden": 128,
+    "dropout": 0.5,
+    "inductive": false,
+    "multil": false
+}

@@ -12,15 +12,21 @@ kwargs_default = {
         'add_self_loops': True,
         'improved': False,
         'normalize': True,
+        'rnorm': 0.5,
+        'diag': 1.,
     },
     'gin': {
         'eps': 0.0,
         'train_eps': False,
+        'rnorm': None,
+        'diag': 1.,
     },
     'gat': {
         'heads': 8,
         'concat': True,
         'add_self_loops': True,
+        'rnorm': None,
+        'diag': 1.,
     },
 }
 
@@ -43,28 +49,30 @@ class GNNThr(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
         self.act = F.relu
         self.use_bn = True
+        self.kwargs = kwargs
 
         # Select conv layer
         Conv = layer_dict[layer]
         # Set layer args
         for k, v in kwargs_default[layer.replace('_thr', '')].items():
-            kwargs.setdefault(k, v)
+            self.kwargs.setdefault(k, v)
 
         self.convs = nn.ModuleList()
-        self.convs.append(Conv(nfeat, nhidden, depth=nlayer, **kwargs))
+        self.convs.append(Conv(nfeat, nhidden, depth=nlayer, **self.kwargs))
         self.norms = nn.ModuleList()
         self.norms.append(nn.BatchNorm1d(nhidden))
 
         for layer in range(1, nlayer - 1):
-            self.convs.append(Conv(nhidden, nhidden, depth=nlayer-layer, **kwargs))
+            self.convs.append(Conv(nhidden, nhidden, depth=nlayer-layer, **self.kwargs))
             self.norms.append(nn.BatchNorm1d(nhidden))
-        self.convs.append(Conv(nhidden, nclass, depth=0, **kwargs))
+        self.convs.append(Conv(nhidden, nclass, depth=0, **self.kwargs))
 
     def remove(self):
         for conv in self.convs:
             if hasattr(conv, 'prune_lst'):
                 for module in conv.prune_lst:
-                    prune.remove(module, 'weight')
+                    if prune.is_pruned(module):
+                        prune.remove(module, 'weight')
 
     def reset_parameters(self):
         for conv in self.convs:

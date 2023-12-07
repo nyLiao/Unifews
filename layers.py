@@ -95,20 +95,19 @@ class GCNConvThr(pyg_nn.GCNConv):
 
         Args:
             inputs
-                x_j [m, F]
+                x_j [m, F]: node feature mapped by edge source nodes
                 edge_weight [m]
             output [m, F]: message value of each edge after message and pending aggregate
         '''
-        # print(inputs, inputs[0]['x_j'].shape)
-        # print(output, output.shape)
-        # ?: infer output much smaller
+        x_j = inputs[0]['x_j']
+        # TODO: infer output much smaller: check batchnorm
         import numpy as np
         hist, bins = output.view(-1).cpu().detach().histogram(bins=10)
         hist = hist.numpy()/output.numel()
         np.set_printoptions(precision=2, suppress=True, formatter={'float': '{: 0.2f}'.format})
-        print(f' % {hist}')
-        print(f' | {bins.numpy()}')
-        # print(torch.norm(output, dim=1).cpu())
+        # print(f' % {hist}')
+        # print(f' | {bins.numpy()}')
+        print(x_j.shape, x_j.norm(dim=0).cpu().detach().numpy(), x_j.norm(dim=1).cpu().detach().numpy())
 
         # Edge pruning
         # TODO: change to relative to x norm
@@ -158,6 +157,7 @@ class GCNConvThr(pyg_nn.GCNConv):
             # if prune.is_pruned(self.lin):
             #     prune.remove(self.lin, 'weight')
 
+        # print(x.shape, x.norm(dim=0).cpu().detach().numpy(), x.norm(dim=1).cpu().detach().numpy())
         # Lock edges ending at node_lock
         self.idx_lock = torch.where(edge_index[1].unsqueeze(0) == node_lock.to(edge_index.device).unsqueeze(1))[1]
         # Lock self-loop edges

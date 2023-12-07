@@ -24,6 +24,7 @@ kwargs_default = {
     'gat': {
         'heads': 8,
         'concat': True,
+        'share_weights': False,
         'add_self_loops': True,
         'rnorm': None,
         'diag': 1.,
@@ -60,11 +61,11 @@ class GNNThr(nn.Module):
         self.convs = nn.ModuleList()
         self.convs.append(Conv(nfeat, nhidden, depth=nlayer, **self.kwargs))
         self.norms = nn.ModuleList()
-        self.norms.append(nn.BatchNorm1d(nhidden))
+        self.norms.append(nn.BatchNorm1d(nhidden, affine=True))
 
         for layer in range(1, nlayer - 1):
             self.convs.append(Conv(nhidden, nhidden, depth=nlayer-layer, **self.kwargs))
-            self.norms.append(nn.BatchNorm1d(nhidden))
+            self.norms.append(nn.BatchNorm1d(nhidden, affine=True))
         self.convs.append(Conv(nhidden, nclass, depth=0, **self.kwargs))
 
     def remove(self):

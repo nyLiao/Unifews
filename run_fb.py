@@ -125,7 +125,7 @@ time_train = 0
 conv_epoch, acc_best = 0, 0
 
 for epoch in range(args.epochs):
-    verbose = (epoch+1) % 5 == 0 and (args.seed >= 7)
+    verbose = (epoch+1) % 1 == 0 and (args.seed >= 7)
     loss_train, time_epoch = train(x=feat['train'], edge_idx=adj['train'],
                                    y=labels['train'], idx_split=idx['train'],
                                    verbose=verbose)

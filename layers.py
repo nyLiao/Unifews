@@ -54,7 +54,7 @@ class GCNConvRaw(pyg_nn.GCNConv):
 class GCNConvThr(pyg_nn.GCNConv):
     def __init__(self, *args, **kwargs):
         super(GCNConvThr, self).__init__(*args, **kwargs)
-        self.threshold_a = 2e-3
+        self.threshold_a = 0.4
         self.threshold_w = 1e-2
         self.idx_keep = None
         self.logger_a = ThrLayerLogger()
@@ -99,28 +99,22 @@ class GCNConvThr(pyg_nn.GCNConv):
                 edge_weight [m]
             output [m, F]: message value of each edge after message and pending aggregate
         '''
-        x_j = inputs[0]['x_j']
-        # TODO: infer output much smaller: check batchnorm
-        import numpy as np
-        hist, bins = output.view(-1).cpu().detach().histogram(bins=10)
-        hist = hist.numpy()/output.numel()
-        np.set_printoptions(precision=2, suppress=True, formatter={'float': '{: 0.2f}'.format})
-        # print(f' % {hist}')
-        # print(f' | {bins.numpy()}')
-        print(x_j.shape, x_j.norm(dim=0).cpu().detach().numpy(), x_j.norm(dim=1).cpu().detach().numpy())
-
         # Edge pruning
-        # TODO: change to relative to x norm
         if self.training:
-            mask_0 = torch.norm(output, dim=1)/output.shape[1] < self.threshold_a
+            norm_feat = torch.norm(output, dim=1)       # each entry accross all features
+            norm_all = torch.norm(norm_feat, dim=None)
+            mask_0 = norm_feat/output.shape[1] < self.threshold_a * norm_all/output.shape[0]
+            # mask_0 = norm_feat/output.shape[1] < self.threshold_a * self.norm_all
             mask_0[self.idx_lock] = False
             output[mask_0] = 0
             self.idx_keep = torch.where(~mask_0)[0]
+        # >>>>>>>>>>
         # else:
-        #     idx_0 = torch.ones(output.shape[0], dtype=torch.bool)
-        #     idx_0[self.idx_keep] = False
-        #     idx_0[self.idx_lock] = False
-        #     output[idx_0] = 0
+        #     mask_0 = torch.ones(output.shape[0], dtype=torch.bool)
+        #     mask_0[self.idx_keep] = False
+        #     mask_0[self.idx_lock] = False
+        #     output[mask_0] = 0
+        return output
 
     def propagate_forward_print(self, module, inputs, output):
         '''hook(self, (edge_index, size, kwargs), out)'''
@@ -165,6 +159,7 @@ class GCNConvThr(pyg_nn.GCNConv):
         self.idx_lock = torch.cat((self.idx_lock, idx_diag))
         self.idx_lock = torch.unique(self.idx_lock)
         # propagate_type: (x: Tensor, edge_weight: OptTensor)
+        # self.norm_all = torch.norm(x, dim=None) / x.shape[0]
         out = self.propagate(edge_index, x=x, edge_weight=edge_weight, size=None)
 
         if self.bias is not None:
@@ -177,6 +172,7 @@ class GCNConvThr(pyg_nn.GCNConv):
             if verbose:
                 print(f"  A: {self.logger_a}, W: {self.logger_w}")
 
+        # >>>>>>>>>>
             edge_index = edge_index[:, self.idx_keep]
             edge_weight = edge_weight[self.idx_keep]
 
@@ -190,6 +186,10 @@ class GINConvRaw(pyg_nn.GINConv):
             [in_channels, out_channels],
         )
         super(GINConvRaw, self).__init__(nn_default, eps, train_eps, **kwargs)
+
+
+class GCNIIConvRaw(pyg_nn.GCN2Conv):
+    pass
 
 
 class GATv2ConvRaw(pyg_nn.GATv2Conv):
@@ -314,6 +314,7 @@ layer_dict = {
     'gcn': GCNConvRaw,
     'gcn_thr': GCNConvThr,
     'gin': GINConvRaw,
+    'gcn2': GCNIIConvRaw,
     'gat': GATv2ConvRaw,
     'gat_thr': GATv2ConvThr,
 }

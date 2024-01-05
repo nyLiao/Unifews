@@ -57,15 +57,16 @@ class GNNThr(nn.Module):
         # Set layer args
         for k, v in kwargs_default[layer.replace('_thr', '')].items():
             self.kwargs.setdefault(k, v)
+        norm_kwargs = {'affine': True, 'track_running_stats': True, 'momentum': 0.9}
 
         self.convs = nn.ModuleList()
         self.convs.append(Conv(nfeat, nhidden, depth=nlayer, **self.kwargs))
         self.norms = nn.ModuleList()
-        self.norms.append(nn.BatchNorm1d(nhidden, affine=True))
+        self.norms.append(nn.BatchNorm1d(nhidden, **norm_kwargs))
 
         for layer in range(1, nlayer - 1):
             self.convs.append(Conv(nhidden, nhidden, depth=nlayer-layer, **self.kwargs))
-            self.norms.append(nn.BatchNorm1d(nhidden, affine=True))
+            self.norms.append(nn.BatchNorm1d(nhidden, **norm_kwargs))
         self.convs.append(Conv(nhidden, nclass, depth=0, **self.kwargs))
 
     def remove(self):

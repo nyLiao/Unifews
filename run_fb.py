@@ -19,7 +19,7 @@ torch.set_printoptions(linewidth=160, edgeitems=5)
 
 # ========== Training settings
 parser = argparse.ArgumentParser()
-parser.add_argument('-f', '--seed', type=int, default=7, help='Random seed.')
+parser.add_argument('-f', '--seed', type=int, default=10, help='Random seed.')
 parser.add_argument('-c', '--config', type=str, default='./config/cora.json', help='Config file path.')
 parser.add_argument('-v', '--dev', type=int, default=1, help='Device id.')
 parser.add_argument('-n', '--suffix', type=str, default='', help='Save name suffix')
@@ -34,7 +34,7 @@ if args.dev >= 0:
 
 flag_run = str(args.seed)
 logger = Logger(args.data, args.algo, flag_run=flag_run)
-if args.seed > 7:
+if args.seed > 20:
     print(args.toDict())
     logger.save_opt(args)
 model_logger = ModelLogger(logger, patience=args.patience, cmp='max',
@@ -50,9 +50,9 @@ model = models.GNNThr(nlayer=args.layer, nfeat=nfeat, nhidden=args.hidden, nclas
 model.reset_parameters()
 adj['train'] = identity_n_norm(adj['train'], edge_weight=None, num_nodes=feat['train'].shape[0],
                     rnorm=model.kwargs['rnorm'], diag=model.kwargs['diag'])
-# if args.seed == 7:
+# if args.seed > 10:
 #     print(type(model).__name__)
-if args.seed > 7:
+if args.seed > 20:
     print(model)
 model_logger.register(model, save_init=False)
 if args.dev >= 0:
@@ -93,8 +93,6 @@ def eval(x, edge_idx, y, idx_split, verbose=False):
         edge_idx = edge_idx.cuda(args.dev)
     calc = metric.F1Calculator(nclass)
     stopwatch.reset()
-    # n = feat['train'].shape[0]
-    # node_lock = torch.LongTensor(np.arange(n))
 
     with torch.no_grad():
         stopwatch.start()
@@ -125,20 +123,20 @@ time_train = 0
 conv_epoch, acc_best = 0, 0
 
 for epoch in range(args.epochs):
-    verbose = (epoch+1) % 1 == 0 and (args.seed >= 7)
+    verbose = (epoch+1) % 1 == 0 and (args.seed >= 10)
     loss_train, time_epoch = train(x=feat['train'], edge_idx=adj['train'],
                                    y=labels['train'], idx_split=idx['train'],
                                    verbose=verbose)
     time_train += time_epoch
     acc_val, _, _, _ = eval(x=feat['train'], edge_idx=adj['train'],
                             y=labels['val'], idx_split=idx['val'])
-    # acc_val = epoch
     scheduler.step(acc_val)
 
     if verbose:
         res = f"Epoch:{epoch:04d} | train loss:{loss_train:.4f}, val acc:{acc_val:.4f}, cost:{time_train:.4f}"
         print(res)
-        # logger.print(res)
+        if args.seed > 20:
+            logger.print(res)
     # Early stop if converge
     acc_best = model_logger.save_best(acc_val, epoch=epoch)
     conv_epoch = epoch + 1
@@ -158,9 +156,10 @@ adj['test'] = identity_n_norm(adj['test'], edge_weight=None, num_nodes=feat['tes
 acc_test, time_test, outl, labl = eval(x=feat['test'], edge_idx=adj['test'],
                                        y=labels['test'], idx_split=idx['test'])
 
-if args.seed >= 6:
+if args.seed >= 5:
     mem_ram, mem_cuda = metric.get_ram(), metric.get_cuda_mem(args.dev)
     print(f"[Val] best acc: {acc_best:0.4f}, [Test] best acc: {acc_test:0.4f}", flush=True)
-    # print(f"[Train] time cost: {time_train:0.4f}, Best epoch: {conv_epoch}, Epoch avg: {time_train*1000 / (epoch+1):0.1f}")
-    # print(f"[Test]  time cost: {time_test:0.4f}, RAM: {mem_ram / 2**20:.3f} GB, CUDA: {mem_cuda / 2**30:.3f} GB")
-    # print(f"Num params (M): {metric.get_num_params(model):0.4f}, Mem params (MB): {metric.get_mem_params(model):0.4f}")
+if args.seed >= 15:
+    print(f"[Train] time cost: {time_train:0.4f}, Best epoch: {conv_epoch}, Epoch avg: {time_train*1000 / (epoch+1):0.1f}")
+    print(f"[Test]  time cost: {time_test:0.4f}, RAM: {mem_ram / 2**20:.3f} GB, CUDA: {mem_cuda / 2**30:.3f} GB")
+    print(f"Num params (M): {metric.get_num_params(model):0.4f}, Mem params (MB): {metric.get_mem_params(model):0.4f}")

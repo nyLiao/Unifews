@@ -33,7 +33,7 @@ class Logger(object):
             flag_run.replace('date', datetime.now().strftime("%m%d"))
         else:
             pass
-        self.dir_save = os.path.join("../save/", data, algo, flag_run)
+        self.dir_save = os.path.join("./save/", data, algo, flag_run)
 
         self.path_exists = os.path.exists(self.dir_save)
         os.makedirs(self.dir_save, exist_ok=True)

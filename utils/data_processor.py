@@ -48,6 +48,20 @@ def matnorm_inf_dual(m, axis=0):
     return (pos + neg)
 
 
+def edgeidx2adj(row, col, n, undirected=False):
+    if undirected:
+        row, col = np.concatenate([row, col], axis=0), np.concatenate([col, row], axis=0)
+    ones = np.ones(len(row), dtype=np.int8)
+    adj = sp.coo_matrix(
+            (ones, (row, col)),
+            shape=(n, n))
+    adj = adj.tocsr()
+    adj.setdiag(0)
+    adj.eliminate_zeros()
+    adj.data = np.ones(len(adj.data), dtype=np.int8)
+    return adj
+
+
 def split_random(seed, n, n_train, n_val):
     """Split index randomly"""
     np.random.seed(seed)
@@ -389,16 +403,7 @@ class DataProcess(object):
             np.save(prt_path, prt)
 
     def to_undirected(self) -> None:
-        self.adj_matrix = self.adj_matrix.tocoo()
-        row, col = self.adj_matrix.row, self.adj_matrix.col
-        row, col = np.concatenate([row, col], axis=0), np.concatenate([col, row], axis=0)
-        ones = np.ones(len(row), dtype=np.int8)
-        self.adj_matrix = sp.coo_matrix(
-            (ones, (row, col)),
-            shape=(self.n, self.n))
-        self.adj_matrix = self.adj_matrix.tocsr()
-        self.adj_matrix.setdiag(0)
-        self.adj_matrix.eliminate_zeros()
+        self.adj_matrix = self.adj_matrix + self.adj_matrix.T
         self.adj_matrix.data = np.ones(len(self.adj_matrix.data), dtype=np.int8)
         self._m = self.adj_matrix.nnz
 

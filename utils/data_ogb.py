@@ -26,31 +26,32 @@ class DataProcess_OGB(DataProcess):
         idx_train, idx_val, idx_test = split_idx["train"], split_idx["valid"], split_idx["test"]
         graph, labels = dataset[0]
 
-        self._n = graph['num_nodes']
         row, col = graph['edge_index'][0], graph['edge_index'][1]
         row, col = np.concatenate([row, col], axis=0), np.concatenate([col, row], axis=0)
-        ones = np.ones(len(row), dtype=np.int8)
-        self.adj_matrix = sp.coo_matrix(
-            (ones, (row, col)),
-            shape=(self.n, self.n))
-        self.adj_matrix = self.adj_matrix.tocsr()
-        self.adj_matrix.setdiag(0)
-        self.adj_matrix.eliminate_zeros()
-        self.adj_matrix.data = np.ones(len(self.adj_matrix.data), dtype=np.int8)
+        deg = np.bincount(row)
+        idx_zero = np.where(deg == 0)[0]
+        if len(idx_zero) > 0:
+            print(f"Warning: removing {len(idx_zero)} isolated nodes: {idx_zero}!")
+
+        # remove isolated nodes
+        nodelst = deg.nonzero()[0]
+        idxnew = np.full(graph['num_nodes'], -1)
+        idxnew[nodelst] = np.arange(len(nodelst))
+        self._n = len(nodelst)
+        row, col = idxnew[row], idxnew[col]
+        self.adj_matrix = edgeidx2adj(row, col, self.n)
         self._m = self.adj_matrix.nnz
 
-        self.calculate(['deg'])
-        idx_zero = np.where(self.deg == 0)[0]
-        if len(idx_zero) > 0:
-            print(f"Warning: {len(idx_zero)} isolated nodes found: {idx_zero}!")
-
-        self.attr_matrix = graph['node_feat']
+        self.attr_matrix = graph['node_feat'][nodelst]
         assert (labels.ndim==2 and labels.shape[1]==1) or labels.ndim==1, "label shape error"
-        self.labels = labels.flatten()
+        self.labels = labels.flatten()[nodelst]
 
-        self.idx_train = idx_train
-        self.idx_val = idx_val
-        self.idx_test = idx_test
+        self.idx_train = idxnew[idx_train]
+        self.idx_train = self.idx_train[self.idx_train > -1]
+        self.idx_val = idxnew[idx_val]
+        self.idx_val = self.idx_val[self.idx_val > -1]
+        self.idx_test = idxnew[idx_test]
+        self.idx_test = self.idx_test[self.idx_test > -1]
 
 
 # ====================

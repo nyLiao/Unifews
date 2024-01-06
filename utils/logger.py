@@ -21,7 +21,7 @@ def prepare_opt(parser) -> DotMap:
 
 
 class Logger(object):
-    def __init__(self, data: str, algo: str, flag_run: str=''):
+    def __init__(self, data: str, algo: str, flag_run: str='', dir: tuple=None):
         super(Logger, self).__init__()
 
         # init log directory
@@ -33,10 +33,12 @@ class Logger(object):
             flag_run.replace('date', datetime.now().strftime("%m%d"))
         else:
             pass
-        self.dir_save = os.path.join("./save/", data, algo, flag_run)
 
+        if dir is None:
+            self.dir_save = os.path.join("./save/", data, algo, flag_run)
+        else:
+            self.dir_save = os.path.join(*dir)
         self.path_exists = os.path.exists(self.dir_save)
-        os.makedirs(self.dir_save, exist_ok=True)
 
         # init log file
         self.flag_run = flag_run
@@ -71,6 +73,7 @@ class Logger(object):
             f.write(temp)
 
     def save_opt(self, opt: DotMap) -> None:
+        os.makedirs(self.dir_save, exist_ok=True)
         with open(self.file_config, 'w') as f:
             json.dump(opt.toDict(), fp=f, indent=4, sort_keys=False)
             f.write('\n')

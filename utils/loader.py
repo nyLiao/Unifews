@@ -21,11 +21,10 @@ def load_edgelist(datastr: str, datapath: str="./data/",
     else:
         dpi = dp
     # Get index
-    # if (datastr.startswith('ppi') or datastr.startswith('yelp') or datastr.startswith('paper')):
-    if datastr.startswith('paper'):
-        dp.input(['idx_train', 'idx_val', 'idx_test'])
-    else:
+    if (datastr.startswith('cora') or datastr.startswith('citeseer') or datastr.startswith('pubmed')):
         dp.calculate(['idx_train'])
+    else:
+        dp.input(['idx_train', 'idx_val', 'idx_test'])
     idx = {'train': torch.LongTensor(dp.idx_train),
            'val':   torch.LongTensor(dp.idx_val),
            'test':  torch.LongTensor(dp.idx_test)}
@@ -57,6 +56,6 @@ def load_edgelist(datastr: str, datapath: str="./data/",
     # Get graph property
     n, m = dp.n, dp.m
     nfeat, nclass = dp.nfeat, dp.nclass
-    if seed >= 7:
+    if seed >= 10:
         print(dp)
     return adj, feat, labels, idx, nfeat, nclass

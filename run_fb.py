@@ -1,3 +1,4 @@
+import os
 import random
 import argparse
 import numpy as np
@@ -155,11 +156,27 @@ adj['test'] = identity_n_norm(adj['test'], edge_weight=None, num_nodes=feat['tes
                     rnorm=model.kwargs['rnorm'], diag=model.kwargs['diag'])
 acc_test, time_test, outl, labl = eval(x=feat['test'], edge_idx=adj['test'],
                                        y=labels['test'], idx_split=idx['test'])
+mem_ram, mem_cuda = metric.get_ram(), metric.get_cuda_mem(args.dev)
+num_param, mem_param = metric.get_num_params(model), metric.get_mem_params(model)
 
-if args.seed >= 5:
-    mem_ram, mem_cuda = metric.get_ram(), metric.get_cuda_mem(args.dev)
+if args.seed >= 5 and args.seed < 25:
     print(f"[Val] best acc: {acc_best:0.4f}, [Test] best acc: {acc_test:0.4f}", flush=True)
-if args.seed >= 15:
+if args.seed >= 15 and args.seed < 25:
     print(f"[Train] time cost: {time_train:0.4f}, Best epoch: {conv_epoch}, Epoch avg: {time_train*1000 / (epoch+1):0.1f}")
     print(f"[Test]  time cost: {time_test:0.4f}, RAM: {mem_ram / 2**20:.3f} GB, CUDA: {mem_cuda / 2**30:.3f} GB")
-    print(f"Num params (M): {metric.get_num_params(model):0.4f}, Mem params (MB): {metric.get_mem_params(model):0.4f}")
+    print(f"Num params (M): {num_param:0.4f}, Mem params (MB): {mem_param:0.4f}")
+if args.seed >= 25:
+    logger_tab = Logger(args.data, args.algo, flag_run=flag_run, dir=('./save', args.data))
+    logger_tab.file_log = logger_tab.path_join('log.csv')
+    hstr, cstr = '', ''
+    hstr += f"  Data    |  Model   | Seed | "
+    cstr += f"{args.data:10s},{args.algo:10s},{flag_run:6s},"
+    hstr += f"Acc   | T train  | T test   | Ep | TAvg | "
+    cstr += f"{acc_test:7.5f},{time_train:10.4f},{time_test:10.4f},{conv_epoch+1:4d},{time_train*1000 / (epoch+1):6.1f},"
+    hstr += f"RAM   | CUDA  | #Param | MParam |"
+    cstr += f"{mem_ram / 2**20:7.3f},{mem_cuda / 2**30:7.3f},{num_param:8.4f},{mem_param:8.4f},"
+    if os.path.exists(logger_tab.file_log):
+        print(hstr)
+    else:
+        logger_tab.print(hstr.replace('|', ','))
+    logger_tab.print(cstr)

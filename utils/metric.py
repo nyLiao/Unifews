@@ -65,15 +65,15 @@ def get_ram() -> float:
 
 
 def get_cuda_mem(dev) -> float:
-    return torch.cuda.max_memory_allocated(dev) / 2**20
+    return torch.cuda.max_memory_allocated(dev) / 2**30
 
 
 def get_num_params(model: nn.Module) -> float:
     num_paramst = sum([param.nelement() for param in model.parameters() if param.requires_grad])
     num_params = sum([param.nelement() for param in model.parameters()])
     num_bufs = sum([buf.nelement() for buf in model.buffers()])
-    # return num_paramst/(1000**2), num_params/(1000**2), num_bufs/(1000**2)
-    return num_paramst/(1000**2)
+    # return num_paramst/1e6, num_params/1e6, num_bufs/1e6
+    return num_paramst/1e6
 
 
 def get_mem_params(model: nn.Module) -> float:

@@ -9,9 +9,9 @@ from .layers import layer_dict
 kwargs_default = {
     'gcn': {
         'cached': False,
-        'add_self_loops': True,
+        'add_self_loops': False,
         'improved': False,
-        'normalize': True,
+        'normalize': False,
         'rnorm': 0.5,
         'diag': 1.,
     },
@@ -25,7 +25,7 @@ kwargs_default = {
         'heads': 8,
         'concat': True,
         'share_weights': False,
-        'add_self_loops': True,
+        'add_self_loops': False,
         'rnorm': None,
         'diag': 1.,
     },
@@ -40,6 +40,15 @@ def state2module(model, param_name):
     return module
 
 
+def cnting_flops(module):
+    if hasattr(module, 'counting'):
+        module.counting = True
+
+def cnted_flops(module):
+    if hasattr(module, 'counting'):
+        module.counting = False
+
+
 class GNNThr(nn.Module):
     def __init__(self, nlayer, nfeat, nhidden, nclass,
                  dropout: float = 0.0,
@@ -48,7 +57,7 @@ class GNNThr(nn.Module):
         super(GNNThr, self).__init__()
         self.apply_thr = (layer.endswith('_thr'))
         self.dropout = nn.Dropout(p=dropout)
-        self.act = F.relu
+        self.act = nn.ReLU()
         self.use_bn = True
         self.kwargs = kwargs
 

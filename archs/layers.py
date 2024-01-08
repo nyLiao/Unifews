@@ -45,6 +45,26 @@ def identity_n_norm(edge_index, edge_weight=None, num_nodes=None,
     raise NotImplementedError()
 
 # ==========
+class ConvTrh(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super(ConvTrh, self).__init__(*args, **kwargs)
+        self.threshold_a = None
+        self.threshold_w = None
+        self.idx_keep = None
+        self.logger_a = ThrLayerLogger()
+        self.logger_w = ThrLayerLogger()
+        self.prune_lst = []
+        self.counting = False
+
+        # self.register_aggregate_forward_hook(self.propagate_forward_print)
+        # self.register_propagate_forward_hook(self.propagate_forward_print)
+
+    def propagate_forward_print(self, module, inputs, output):
+        '''hook(self, (edge_index, size, kwargs), out)'''
+        print(inputs[0], inputs[0].shape, inputs[1])
+        print(output, output.shape)
+
+
 class GCNConvRaw(pyg_nn.GCNConv):
     def forward(self, x: Tensor, edge_tuple: Tuple, **kwargs):
         (edge_index, edge_weight) = edge_tuple
@@ -54,26 +74,25 @@ class GCNConvRaw(pyg_nn.GCNConv):
     def cnt_flops(cls, module, input, output):
         x_in, (edge_index, edge_weight) = input
         x_out = output
-        f_in, f_out = x_in.shape[1], x_out.shape[1]
+        f_in, f_out = x_in.shape[-1], x_out.shape[-1]
         n, m = x_in.shape[0], edge_index.shape[1]
-        module.__flops__ += 2 * f_in * m
-        module.__flops__ += (2* f_in * f_out + f_in) * n
+
+        # Linear
+        bias_flops = f_out if module.lin.bias is not None else 0
+        module.__flops__ += (f_in * f_out + bias_flops) * n
+        # Message
+        module.__flops__ += f_in * m
 
 
-class GCNConvThr(GCNConvRaw):
+class GCNConvThr(GCNConvRaw, ConvTrh):
     def __init__(self, *args, **kwargs):
         super(GCNConvThr, self).__init__(*args, **kwargs)
         self.threshold_a = 0.4
         self.threshold_w = 1e-2
-        self.idx_keep = None
-        self.logger_a = ThrLayerLogger()
-        self.logger_w = ThrLayerLogger()
         self.prune_lst = [self.lin]
 
         # self.register_propagate_forward_pre_hook(self.prune_edge)
         self.register_message_forward_hook(self.get_edge_rm)
-        # self.register_aggregate_forward_hook(self.propagate_forward_print)
-        # self.register_propagate_forward_hook(self.propagate_forward_print)
 
     def prune_edge(self, module, inputs): # -> None or inputs
         '''hook(self, (edge_index, size, kwargs))
@@ -118,17 +137,12 @@ class GCNConvThr(GCNConvRaw):
             output[mask_0] = 0
             self.idx_keep = torch.where(~mask_0)[0]
         # >>>>>>>>>>
-        # else:
-        #     mask_0 = torch.ones(output.shape[0], dtype=torch.bool)
-        #     mask_0[self.idx_keep] = False
-        #     mask_0[self.idx_lock] = False
-        #     output[mask_0] = 0
+        elif self.counting:
+            mask_0 = torch.ones(output.shape[0], dtype=torch.bool)
+            mask_0[self.idx_keep] = False
+            mask_0[self.idx_lock] = False
+            output[mask_0] = 0
         return output
-
-    def propagate_forward_print(self, module, inputs, output):
-        '''hook(self, (edge_index, size, kwargs), out)'''
-        print(inputs[0], inputs[0].shape, inputs[1])
-        print(output, output.shape)
 
     # def reset_parameters(self):
     #     super().reset_parameters()
@@ -160,7 +174,6 @@ class GCNConvThr(GCNConvRaw):
             # if prune.is_pruned(self.lin):
             #     prune.remove(self.lin, 'weight')
 
-        # print(x.shape, x.norm(dim=0).cpu().detach().numpy(), x.norm(dim=1).cpu().detach().numpy())
         # Lock edges ending at node_lock
         self.idx_lock = torch.where(edge_index[1].unsqueeze(0) == node_lock.to(edge_index.device).unsqueeze(1))[1]
         # Lock self-loop edges
@@ -175,7 +188,7 @@ class GCNConvThr(GCNConvRaw):
             out = out + self.bias
 
         # Edge removal for next layer
-        if self.training:
+        if self.training or self.counting:
             self.logger_a.numel_before = edge_index.shape[1]
             self.logger_a.numel_after = self.idx_keep.shape[0]
             if verbose:
@@ -186,6 +199,19 @@ class GCNConvThr(GCNConvRaw):
             edge_weight = edge_weight[self.idx_keep]
 
         return out, (edge_index, edge_weight)
+
+    @classmethod
+    def cnt_flops(cls, module, input, output):
+        x_in, _ = input
+        x_out, (edge_index, edge_weight) = output
+        f_in, f_out = x_in.shape[-1], x_out.shape[-1]
+        n, m = x_in.shape[0], edge_index.shape[1]
+
+        # Linear
+        flops_bias = f_out if module.lin.bias is not None else 0
+        module.__flops__ += int((f_in * f_out * module.logger_w.ratio + flops_bias) * n)
+        # Message
+        module.__flops__ += f_in * m
 
 
 class GINConvRaw(pyg_nn.GINConv):
@@ -211,15 +237,37 @@ class GATv2ConvRaw(pyg_nn.GATv2Conv):
         super(GATv2ConvRaw, self).__init__(in_channels, out_channels, heads, concat, **kwargs)
         self.prune_lst = [self.lin_l, self.lin_r]
 
+    @classmethod
+    def cnt_flops(cls, module, input, output):
+        x_in, edge_index = input
+        f_in, f_h, f_c = x_in.shape[-1], module.heads, module.out_channels
+        n, m = x_in.shape[0], edge_index.shape[1]
 
-class GATv2ConvThr(GATv2ConvRaw):
+        # Linear
+        flops_lin = f_in * f_h * f_c * n
+        if not module.share_weights:
+            flops_lin *= 2
+        module.__flops__ += flops_lin
+        # Message
+        flops_attn  = f_c * m                # relu
+        flops_attn += f_c * f_c * m          # alpha
+        flops_attn += 2 * m                  # softmax & attention
+        flops_attn *= f_h
+        module.__flops__ += flops_attn
+        # Bias and concat
+        if (module.bias is not None) and module.concat:
+            module.__flops__ += f_h * f_c * n
+        elif (module.bias is not None) and not module.concat:
+            module.__flops__ += (f_c + 1) * n
+        else:
+            module.__flops__ += n
+
+
+class GATv2ConvThr(GATv2ConvRaw, ConvTrh):
     def __init__(self, *args, **kwargs):
         super(GATv2ConvThr, self).__init__(*args, **kwargs)
         self.threshold_a = 5e-4
         self.threshold_w = 1e-2
-        self.idx_keep = None
-        self.logger_a = ThrLayerLogger()
-        self.logger_w = ThrLayerLogger()
 
     def forward(self, x: Tensor, edge_index: Adj,
                 edge_attr: OptTensor = None,
@@ -272,7 +320,7 @@ class GATv2ConvThr(GATv2ConvRaw):
             out = out + self.bias
 
         # Edge removal for next layer
-        if self.training:
+        if self.training or self.counting:
             self.logger_a.numel_before = edge_index.shape[1]
             self.logger_a.numel_after = self.idx_keep.shape[0]
             if verbose:
@@ -293,7 +341,6 @@ class GATv2ConvThr(GATv2ConvRaw):
             alpha (Tensor [m, H])
         """
         x = x_i + x_j
-
         if edge_attr is not None:
             if edge_attr.dim() == 1:
                 edge_attr = edge_attr.view(-1, 1)
@@ -307,16 +354,49 @@ class GATv2ConvThr(GATv2ConvRaw):
         alpha = softmax(alpha, index, ptr, size_i)
 
         # Edge pruning
+        # TODO: change to norm
         if self.training:
             threshold_aj = self.threshold_a / (torch.norm(x_j, dim=[1,2])/x_j.shape[1]/x_j.shape[2])
             mask_0 = torch.norm(alpha, dim=1)/alpha.shape[1] < threshold_aj
             mask_0[self.idx_lock] = False
             alpha[mask_0] = 0
             self.idx_keep = torch.where(~mask_0)[0]
+        elif self.counting:
+            mask_0 = torch.ones(alpha.shape[0], dtype=torch.bool)
+            mask_0[self.idx_keep] = False
+            mask_0[self.idx_lock] = False
+            alpha[mask_0] = 0
 
         self._alpha = alpha
         alpha = F.dropout(alpha, p=self.dropout, training=self.training)
         return x_j * alpha.unsqueeze(-1)
+
+    @classmethod
+    def cnt_flops(cls, module, input, output):
+        x_in, _ = input
+        x_out, edge_index = output
+        f_in, f_h, f_c = x_in.shape[-1], module.heads, module.out_channels
+        n, m = x_in.shape[0], edge_index.shape[1]
+
+        # Linear
+        flops_lin = f_in * f_h * f_c * n
+        if not module.share_weights:
+            flops_lin *= 2
+        flops_lin = int(flops_lin * module.logger_w.ratio)
+        module.__flops__ += flops_lin
+        # Message
+        flops_attn  = f_c * m                # relu
+        flops_attn += f_c * f_c * m          # alpha
+        flops_attn += 2 * m                  # softmax & attention
+        flops_attn *= f_h
+        module.__flops__ += flops_attn
+        # Bias and concat
+        if (module.bias is not None) and module.concat:
+            module.__flops__ += f_h * f_c * n
+        elif (module.bias is not None) and not module.concat:
+            module.__flops__ += (f_c + 1) * n
+        else:
+            module.__flops__ += n
 
 
 # ==========
@@ -331,5 +411,7 @@ layer_dict = {
 
 flops_modules_dict = {
     GCNConvRaw: GCNConvRaw.cnt_flops,
-    GCNConvThr: GCNConvRaw.cnt_flops,
+    GCNConvThr: GCNConvThr.cnt_flops,
+    GATv2ConvRaw: GATv2ConvRaw.cnt_flops,
+    GATv2ConvThr: GATv2ConvThr.cnt_flops,
 }

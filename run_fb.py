@@ -21,7 +21,7 @@ torch.set_printoptions(linewidth=160, edgeitems=5)
 
 # ========== Training settings
 parser = argparse.ArgumentParser()
-parser.add_argument('-f', '--seed', type=int, default=10, help='Random seed.')
+parser.add_argument('-f', '--seed', type=int, default=11, help='Random seed.')
 parser.add_argument('-c', '--config', type=str, default='./config/cora.json', help='Config file path.')
 parser.add_argument('-v', '--dev', type=int, default=1, help='Device id.')
 parser.add_argument('-n', '--suffix', type=str, default='', help='Save name suffix')
@@ -52,8 +52,8 @@ model = models.GNNThr(nlayer=args.layer, nfeat=nfeat, nhidden=args.hidden, nclas
 model.reset_parameters()
 adj['train'] = identity_n_norm(adj['train'], edge_weight=None, num_nodes=feat['train'].shape[0],
                     rnorm=model.kwargs['rnorm'], diag=model.kwargs['diag'])
-# if args.seed > 10:
-#     print(type(model).__name__)
+if args.seed > 15:
+    print(type(model).__name__)
 if args.seed > 20:
     print(model)
 model_logger.register(model, save_init=False)
@@ -118,6 +118,7 @@ def eval(x, edge_idx, y, idx_split, verbose=False):
 
 def get_flops(x, edge_idx, idx_split, verbose=False):
     model.eval()
+    model.apply(models.cnting_flops)
     x = x.cuda(args.dev)
     if isinstance(edge_idx, tuple):
         edge_idx = (edge_idx[0].cuda(args.dev), edge_idx[1].cuda(args.dev))
@@ -128,7 +129,8 @@ def get_flops(x, edge_idx, idx_split, verbose=False):
                         input_constructor=lambda _: {'x': x, 'edge_idx': edge_idx},
                         custom_modules_hooks=flops_modules_dict,
                         as_strings=False, print_per_layer_stat=verbose, verbose=verbose)
-    return macs/(1000**3)
+    model.apply(models.cnted_flops)
+    return macs/1e9
 
 
 # ========== Train

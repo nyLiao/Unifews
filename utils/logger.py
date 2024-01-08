@@ -270,6 +270,10 @@ class ThrLayerLogger(object):
         self.numel_before = None
         self.numel_after = None
 
+    @property
+    def ratio(self) -> float:
+        return self.numel_after / self.numel_before
+
     def __str__(self) -> str:
-        s = f"{self.numel_after}/{self.numel_before} ({1-self.numel_after/self.numel_before:6.2%})"
+        s = f"{self.numel_after}/{self.numel_before} ({1-self.ratio:6.2%})"
         return s

@@ -2,6 +2,7 @@ import os
 import random
 import argparse
 import numpy as np
+import ptflops
 
 import torch
 import torch.nn as nn
@@ -10,8 +11,8 @@ import torch.optim as optim
 from utils.logger import Logger, ModelLogger, prepare_opt
 from utils.loader import load_edgelist
 import utils.metric as metric
-from layers import identity_n_norm
-import models
+from archs import identity_n_norm, flops_modules_dict
+import archs.models as models
 
 
 np.set_printoptions(linewidth=160, edgeitems=5, threshold=20,
@@ -115,6 +116,21 @@ def eval(x, edge_idx, y, idx_split, verbose=False):
     return res, stopwatch.time, output, y
 
 
+def get_flops(x, edge_idx, idx_split, verbose=False):
+    model.eval()
+    x = x.cuda(args.dev)
+    if isinstance(edge_idx, tuple):
+        edge_idx = (edge_idx[0].cuda(args.dev), edge_idx[1].cuda(args.dev))
+    else:
+        edge_idx = edge_idx.cuda(args.dev)
+
+    macs, nparam = ptflops.get_model_complexity_info(model, (1,1,1),
+                        input_constructor=lambda _: {'x': x, 'edge_idx': edge_idx},
+                        custom_modules_hooks=flops_modules_dict,
+                        as_strings=False, print_per_layer_stat=verbose, verbose=verbose)
+    return macs/(1000**3)
+
+
 # ========== Train
 # print('-' * 20, flush=True)
 # print('Start training...')
@@ -158,13 +174,15 @@ acc_test, time_test, outl, labl = eval(x=feat['test'], edge_idx=adj['test'],
                                        y=labels['test'], idx_split=idx['test'])
 mem_ram, mem_cuda = metric.get_ram(), metric.get_cuda_mem(args.dev)
 num_param, mem_param = metric.get_num_params(model), metric.get_mem_params(model)
+macs = get_flops(x=feat['test'], edge_idx=adj['test'], idx_split=idx['test'])
 
+# ========== Log
 if args.seed >= 5 and args.seed < 25:
     print(f"[Val] best acc: {acc_best:0.4f}, [Test] best acc: {acc_test:0.4f}", flush=True)
 if args.seed >= 15 and args.seed < 25:
     print(f"[Train] time cost: {time_train:0.4f}, Best epoch: {conv_epoch}, Epoch avg: {time_train*1000 / (epoch+1):0.1f}")
-    print(f"[Test]  time cost: {time_test:0.4f}, RAM: {mem_ram / 2**20:.3f} GB, CUDA: {mem_cuda / 2**30:.3f} GB")
-    print(f"Num params (M): {num_param:0.4f}, Mem params (MB): {mem_param:0.4f}")
+    print(f"[Test]  time cost: {time_test:0.4f}, RAM: {mem_ram:.3f} GB, CUDA: {mem_cuda:.3f} GB")
+    print(f"Num params (M): {num_param:0.4f}, Mem params (MB): {mem_param:0.4f}, MACs (G): {macs:0.4f}")
 if args.seed >= 25:
     logger_tab = Logger(args.data, args.algo, flag_run=flag_run, dir=('./save', args.data))
     logger_tab.file_log = logger_tab.path_join('log.csv')
@@ -173,8 +191,8 @@ if args.seed >= 25:
     cstr += f"{args.data:10s},{args.algo:10s},{flag_run:6s},"
     hstr += f"Acc   | T train  | T test   | Ep | TAvg | "
     cstr += f"{acc_test:7.5f},{time_train:10.4f},{time_test:10.4f},{conv_epoch+1:4d},{time_train*1000 / (epoch+1):6.1f},"
-    hstr += f"RAM   | CUDA  | #Param | MParam |"
-    cstr += f"{mem_ram / 2**20:7.3f},{mem_cuda / 2**30:7.3f},{num_param:8.4f},{mem_param:8.4f},"
+    hstr += f"RAM   | CUDA  | #Param | MParam | GMACs  |"
+    cstr += f"{mem_ram:7.3f},{mem_cuda:7.3f},{num_param:8.4f},{mem_param:8.4f},{macs:8.4f}"
     if os.path.exists(logger_tab.file_log):
         print(hstr)
     else:

@@ -61,11 +61,11 @@ class Stopwatch:
 
 
 def get_ram() -> float:
-    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20
 
 
 def get_cuda_mem(dev) -> float:
-    return torch.cuda.max_memory_allocated(dev)
+    return torch.cuda.max_memory_allocated(dev) / 2**20
 
 
 def get_num_params(model: nn.Module) -> float:

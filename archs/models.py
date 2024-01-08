@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.utils.prune as prune
 
-from layers import layer_dict
+from .layers import layer_dict
 
 
 kwargs_default = {

@@ -1,5 +1,5 @@
 {
-    "data": "cora",
+    "data": "pubmed",
     "path": "./data/",
     "algo": "gcn",
     "epochs": 2,

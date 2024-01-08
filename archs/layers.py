@@ -5,7 +5,7 @@ from torch_geometric.nn.conv.gcn_conv import *
 from torch_geometric.nn.conv.gatv2_conv import *
 
 from utils.logger import ThrLayerLogger
-from utils.prunes import ThrInPrune, prune
+from .prunes import ThrInPrune, prune
 
 
 def identity_n_norm(edge_index, edge_weight=None, num_nodes=None,
@@ -50,8 +50,17 @@ class GCNConvRaw(pyg_nn.GCNConv):
         (edge_index, edge_weight) = edge_tuple
         return super().forward(x, edge_index, edge_weight)
 
+    @classmethod
+    def cnt_flops(cls, module, input, output):
+        x_in, (edge_index, edge_weight) = input
+        x_out = output
+        f_in, f_out = x_in.shape[1], x_out.shape[1]
+        n, m = x_in.shape[0], edge_index.shape[1]
+        module.__flops__ += 2 * f_in * m
+        module.__flops__ += (2* f_in * f_out + f_in) * n
 
-class GCNConvThr(pyg_nn.GCNConv):
+
+class GCNConvThr(GCNConvRaw):
     def __init__(self, *args, **kwargs):
         super(GCNConvThr, self).__init__(*args, **kwargs)
         self.threshold_a = 0.4
@@ -310,6 +319,7 @@ class GATv2ConvThr(GATv2ConvRaw):
         return x_j * alpha.unsqueeze(-1)
 
 
+# ==========
 layer_dict = {
     'gcn': GCNConvRaw,
     'gcn_thr': GCNConvThr,
@@ -317,4 +327,9 @@ layer_dict = {
     'gcn2': GCNIIConvRaw,
     'gat': GATv2ConvRaw,
     'gat_thr': GATv2ConvThr,
+}
+
+flops_modules_dict = {
+    GCNConvRaw: GCNConvRaw.cnt_flops,
+    GCNConvThr: GCNConvRaw.cnt_flops,
 }

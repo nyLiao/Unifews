@@ -78,13 +78,6 @@ class GNNThr(nn.Module):
             self.norms.append(nn.BatchNorm1d(nhidden, **norm_kwargs))
         self.convs.append(Conv(nhidden, nclass, depth=0, **self.kwargs))
 
-    def remove(self):
-        for conv in self.convs:
-            if hasattr(conv, 'prune_lst'):
-                for module in conv.prune_lst:
-                    if prune.is_pruned(module):
-                        prune.remove(module, 'weight')
-
     def reset_parameters(self):
         for conv in self.convs:
             conv.reset_parameters()
@@ -111,6 +104,18 @@ class GNNThr(nn.Module):
                 x = self.dropout(x)
             x = self.convs[-1](x, edge_idx)
             return x
+
+    def remove(self):
+        for conv in self.convs:
+            if hasattr(conv, 'prune_lst'):
+                for module in conv.prune_lst:
+                    if prune.is_pruned(module):
+                        prune.remove(module, 'weight')
+
+    def get_numel(self):
+        numel_a = sum([conv.logger_a.numel_after for conv in self.convs])
+        numel_w = sum([conv.logger_w.numel_after for conv in self.convs])
+        return numel_a/1e3, numel_w/1e6
 
     @classmethod
     def batch_counter_hook(cls, module, input, output):

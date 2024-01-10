@@ -4,7 +4,7 @@ import torch_geometric.nn as pyg_nn
 from torch_geometric.nn.conv.gcn_conv import *
 from torch_geometric.nn.conv.gatv2_conv import *
 
-from utils.logger import ThrLayerLogger
+from utils.logger import LayerNumLogger
 from .prunes import ThrInPrune, prune
 
 
@@ -51,8 +51,6 @@ class ConvThr(nn.Module):
         self.threshold_a = None
         self.threshold_w = None
         self.idx_keep = None
-        self.logger_a = ThrLayerLogger()
-        self.logger_w = ThrLayerLogger()
         self.prune_lst = []
         self.counting = False
 
@@ -66,8 +64,19 @@ class ConvThr(nn.Module):
 
 
 class GCNConvRaw(pyg_nn.GCNConv):
+    def __init__(self, *args, **kwargs):
+        super(GCNConvRaw, self).__init__(*args, **kwargs)
+        self.logger_a = LayerNumLogger()        # sparsity of adjacancy matrix
+        self.logger_w = LayerNumLogger()        # sparsity of weight matrix
+        self.logger_n = LayerNumLogger()        # sparsity of node feature matrix
+        self.logger_m = LayerNumLogger()        # sparsity of message matrix
+
     def forward(self, x: Tensor, edge_tuple: Tuple, **kwargs):
         (edge_index, edge_weight) = edge_tuple
+        self.logger_a.numel_after = edge_index.shape[1]
+        self.logger_w.numel_after = self.lin.weight.numel()
+        self.logger_n.numel_before = x.numel()
+        self.logger_n.numel_after = torch.sum(x != 0).item()
         return super().forward(x, edge_index, edge_weight)
 
     @classmethod
@@ -78,9 +87,12 @@ class GCNConvRaw(pyg_nn.GCNConv):
         n, m = x_in.shape[0], edge_index.shape[1]
 
         # Linear
-        bias_flops = f_out if module.lin.bias is not None else 0
-        module.__flops__ += (f_in * f_out + bias_flops) * n
+        flops_bias = f_out if module.lin.bias is not None else 0
+        # module.__flops__ += int(f_in * f_out * n * module.logger_n.ratio)
+        module.__flops__ += int(f_in * f_out * n)
+        module.__flops__ += flops_bias * n
         # Message
+        # module.__flops__ += int(f_in * m * module.logger_m.ratio)
         module.__flops__ += f_in * m
 
 
@@ -236,7 +248,14 @@ class GATv2ConvRaw(pyg_nn.GATv2Conv):
         if concat:
             out_channels = out_channels // heads
         super(GATv2ConvRaw, self).__init__(in_channels, out_channels, heads, concat, **kwargs)
-        self.prune_lst = [self.lin_l, self.lin_r]
+        self.logger_a = LayerNumLogger()
+        self.logger_w = LayerNumLogger()
+
+    def forward(self, x: Tensor, edge_index: Adj,
+                edge_weight: OptTensor = None, **kwargs):
+        self.logger_a.numel_after = edge_index.shape[1]
+        self.logger_w.numel_after = self.lin_l.weight.numel() + self.lin_r.weight.numel()
+        return super().forward(x, edge_index, edge_weight)
 
     @classmethod
     def cnt_flops(cls, module, input, output):
@@ -269,6 +288,7 @@ class GATv2ConvThr(GATv2ConvRaw, ConvThr):
         super(GATv2ConvThr, self).__init__(*args, **kwargs)
         self.threshold_a = 5e-4
         self.threshold_w = 1e-2
+        self.prune_lst = [self.lin_l, self.lin_r]
 
     def forward(self, x: Tensor, edge_index: Adj,
                 edge_attr: OptTensor = None,
@@ -309,9 +329,9 @@ class GATv2ConvThr(GATv2ConvRaw, ConvThr):
         # propagate_type: (x: PairTensor, edge_attr: OptTensor)
         out = self.propagate(edge_index, x=(x_l, x_r), edge_attr=edge_attr, size=None)
 
-        alpha = self._alpha
-        assert alpha is not None
-        self._alpha = None
+        # alpha = self._alpha
+        # assert alpha is not None
+        # self._alpha = None
 
         if self.concat:
             out = out.view(-1, self.heads * self.out_channels)
@@ -368,7 +388,7 @@ class GATv2ConvThr(GATv2ConvRaw, ConvThr):
             mask_0[self.idx_lock] = False
             alpha[mask_0] = 0
 
-        self._alpha = alpha
+        # self._alpha = alpha
         alpha = F.dropout(alpha, p=self.dropout, training=self.training)
         return x_j * alpha.unsqueeze(-1)
 

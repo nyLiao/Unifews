@@ -62,7 +62,7 @@ if args.dev >= 0:
 
 # ========== Train helper
 optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, threshold=1e-4, patience=30, verbose=False)
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, threshold=1e-4, patience=15, verbose=False)
 loss_fn = nn.BCEWithLogitsLoss() if args.multil else nn.CrossEntropyLoss()
 
 
@@ -179,8 +179,9 @@ adj['test'] = identity_n_norm(adj['test'], edge_weight=None, num_nodes=feat['tes
                     rnorm=model.kwargs['rnorm'], diag=model.kwargs['diag'])
 acc_test, time_test, outl, labl = eval(x=feat['test'], edge_idx=adj['test'],
                                        y=labels['test'], idx_split=idx['test'])
-mem_ram, mem_cuda = metric.get_ram(), metric.get_cuda_mem(args.dev)
-num_param, mem_param = metric.get_num_params(model), metric.get_mem_params(model)
+# mem_ram, mem_cuda = metric.get_ram(), metric.get_cuda_mem(args.dev)
+# num_param, mem_param = metric.get_num_params(model), metric.get_mem_params(model)
+numel_a, numel_w = model.get_numel()
 macs_test = get_flops(x=feat['test'], edge_idx=adj['test'], idx_split=idx['test'])
 
 # ========== Log
@@ -188,14 +189,13 @@ if args.seed >= 5:
     print(f"[Val] best acc: {acc_best:0.4f} (epoch: {epoch_conv}/{epoch}), [Test] best acc: {acc_test:0.4f}", flush=True)
 if args.seed >= 15:
     print(f"[Train] time: {time_tol.val:0.4f} s (avg: {time_tol.avg*1000:0.1f} ms), MACs: {macs_tol.val:0.4f} G (avg: {macs_tol.avg:0.1f} G)")
-    print(f"[Test]  time: {time_test:0.4f} s, MACs: {macs_test:0.4f} G, RAM: {mem_ram:.3f} GB, CUDA: {mem_cuda:.3f} GB")
-    print(f"Num params: {num_param:0.4f} M, Mem params: {mem_param:0.4f} MB")
+    print(f"[Test]  time: {time_test:0.4f} s, MACs: {macs_test:0.4f} G, Num adj: {numel_a:0.3f} k, Num weight: {numel_w:0.3f} M")
+    # print(f"RAM: {mem_ram:.3f} GB, CUDA: {mem_cuda:.3f} GB, Num params: {num_param:0.4f} M, Mem params: {mem_param:0.4f} MB")
 if args.seed >= 25:
     logger_tab = Logger(args.data, args.algo, flag_run=flag_run, dir=('./save', args.data))
     logger_tab.file_log = logger_tab.path_join('log.csv')
     hstr, cstr = logger_tab.str_csv(data=args.data, algo=args.algo, seed=flag_run,
                                     acc_test=acc_test, conv_epoch=epoch_conv, epoch=epoch,
                                     time_train=time_tol.val, macs_train=macs_tol.val,
-                                    time_test=time_test, macs_test=macs_test, mem_ram=mem_ram, mem_cuda=mem_cuda,
-                                    num_param=num_param, mem_param=mem_param)
+                                    time_test=time_test, macs_test=macs_test, numel_a=numel_a, numel_w=numel_w)
     logger_tab.print_header(hstr, cstr)

@@ -98,7 +98,7 @@ class Logger(object):
 
     def str_csv(self, data, algo, seed,
                acc_test, conv_epoch, epoch, time_train, macs_train,
-               time_test, macs_test, mem_ram, mem_cuda, num_param, mem_param):
+               time_test, macs_test, numel_a, numel_w):
         hstr, cstr = '', ''
         hstr += f"  Data    |  Model   | Seed | "
         cstr += f"{data:10s},{algo:10s},{seed:6s},"
@@ -106,8 +106,8 @@ class Logger(object):
         cstr += f"{acc_test:7.5f},{conv_epoch:4d},{epoch:4d},"
         hstr += f"Ttrain | Ctrain | "
         cstr += f"{time_train:8.4f},{macs_train:8.4f},"
-        hstr += f"Ttest  | CTest  | RAM   | CUDA  | #Param | MParam "
-        cstr += f"{time_test:8.4f},{macs_test:8.4f},{mem_ram:7.3f},{mem_cuda:7.3f},{num_param:8.4f},{mem_param:8.4f}"
+        hstr += f"Ttest  | CTest  | NumelA | NumelW "
+        cstr += f"{time_test:8.4f},{macs_test:8.4f},{numel_a:8.3f},{numel_w:8.3f}"
         return hstr, cstr
 
 
@@ -285,9 +285,8 @@ class ModelLogger(object):
         return epoch - self.epoch_best >= self.patience
 
 
-class ThrLayerLogger(object):
+class LayerNumLogger(object):
     def __init__(self):
-        self.thr = None
         self.numel_before = None
         self.numel_after = None
 

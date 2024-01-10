@@ -103,10 +103,10 @@ class GCNConvThr(GCNConvRaw, ConvThr):
         self.threshold_w = 0.3
         self.prune_lst = [self.lin]
 
-        # self.register_propagate_forward_pre_hook(self.prune_edge)
-        self.register_message_forward_hook(self.get_edge_rm)
+        # self.register_propagate_forward_pre_hook(self.prune_on_ew)
+        self.register_message_forward_hook(self.prune_on_msg)
 
-    def prune_edge(self, module, inputs): # -> None or inputs
+    def prune_on_ew(self, module, inputs): # -> None or inputs
         '''hook(self, (edge_index, size, kwargs))
         Called before propagate().
             E.g. in GCNConv, after `edge_index, edge_weight = gcn_norm()` and
@@ -122,12 +122,26 @@ class GCNConvThr(GCNConvRaw, ConvThr):
         edge_index, size, kwargs = inputs
         x, edge_weight = kwargs['x'], kwargs['edge_weight']
 
-        if self.idx_keep is not None:
+        if self.training:
+            norm_feat_node = torch.norm(x, dim=1)/x.shape[1]       # each node accross all features
+            norm_all_node = torch.norm(norm_feat_node, dim=None)/x.shape[0]
+            mask_0 = edge_weight < self.threshold_a / norm_feat_node[edge_index[0]] * norm_all_node
+            mask_0[self.idx_lock] = False
+            self.idx_keep = torch.where(~mask_0)[0]
+        elif self.counting:
+            mask_0 = torch.ones(edge_weight.shape[0], dtype=torch.bool)
+            mask_0[self.idx_keep] = False
+            mask_0[self.idx_lock] = False
+
+        if self.training or self.counting:
+            self.logger_a.numel_before = edge_index.shape[1]
+            self.logger_a.numel_after = self.idx_keep.shape[0]
             edge_index = edge_index[:, self.idx_keep]
             edge_weight = edge_weight[self.idx_keep]
+            size = (size[0], edge_weight.shape[0]) if size is not None else None
         return edge_index, size, {'x': x, 'edge_weight': edge_weight}
 
-    def get_edge_rm(self, module, inputs, output): # -> None or output
+    def prune_on_msg(self, module, inputs, output): # -> None or output
         '''res = hook(self, ({'x_j', 'edge_weight'}, ), output)
         Applicable only if not is_sparse(edge_index)
         Called in propagate(), after `out = self.message(**msg_kwargs)`
@@ -139,12 +153,17 @@ class GCNConvThr(GCNConvRaw, ConvThr):
                 edge_weight [m]
             output [m, F]: message value of each edge after message and pending aggregate
         '''
+        x_j = inputs[0]['x_j']
+        self.logger_m.numel_before = x_j.numel()
+        self.logger_m.numel_after = torch.sum(x_j != 0).item()
+
         # Edge pruning
         if self.training:
-            norm_feat = torch.norm(output, dim=1)       # each entry accross all features
-            norm_all_msg = torch.norm(norm_feat, dim=None)
-            mask_0 = norm_feat/output.shape[1] < self.threshold_a * norm_all_msg/output.shape[0]
-            # mask_0 = norm_feat/output.shape[1] < self.threshold_a * self.norm_all_node
+            norm_feat_edge = torch.norm(output, dim=1)       # each entry accross all features
+            norm_all_out = torch.norm(norm_feat_edge, dim=None)/output.shape[0]
+            norm_feat_edge /= output.shape[1]
+            mask_0 = norm_feat_edge < self.threshold_a * norm_all_out
+            # mask_0 = norm_feat < self.threshold_a * self.norm_all_node
             mask_0[self.idx_lock] = False
             output[mask_0] = 0
             self.idx_keep = torch.where(~mask_0)[0]
@@ -169,6 +188,8 @@ class GCNConvThr(GCNConvRaw, ConvThr):
             x (Tensor [n, F_in]): node feature matrix
         """
         (edge_index, edge_weight) = edge_tuple
+        self.logger_n.numel_before = x.numel()
+        self.logger_n.numel_after = torch.sum(x != 0).item()
         # Weight pruning
         # TODO: graduate prune and regrow
         if self.training:
@@ -176,6 +197,7 @@ class GCNConvThr(GCNConvRaw, ConvThr):
                 threshold_wi [F_in]
                 self.lin.weight [F_out, F_in]
             '''
+            # TODO: change to norm
             threshold_wi = self.threshold_w / torch.norm(x, dim=0)
             ThrInPrune.apply(self.lin, 'weight', threshold_wi)
             x = self.lin(x)
@@ -193,6 +215,28 @@ class GCNConvThr(GCNConvRaw, ConvThr):
         idx_diag = torch.where(edge_index[0] == edge_index[1])[0]
         self.idx_lock = torch.cat((self.idx_lock, idx_diag))
         self.idx_lock = torch.unique(self.idx_lock)
+
+        ''' prune_on_ew implemet (2)
+        if self.training:
+            norm_feat_node = torch.norm(x, dim=1)       # each node accross all features
+            norm_all_node = torch.norm(norm_feat_node, dim=None)/x.shape[0]
+            # norm_all_msg = torch.norm(norm_feat_node[edge_index[0]], dim=None)/edge_weight.shape[0]
+            norm_feat_node /= x.shape[1]
+            mask_0 = edge_weight < self.threshold_a / norm_feat_node[edge_index[0]] * norm_all_node
+            mask_0[self.idx_lock] = False
+            self.idx_keep = torch.where(~mask_0)[0]
+        elif self.counting:
+            self.idx_keep = torch.cat((self.idx_keep, self.idx_lock.clone())).to(self.idx_keep.device)
+            self.idx_keep = torch.unique(self.idx_keep, sorted=False)
+
+        # Edge removal
+        if self.training or self.counting:
+            self.logger_a.numel_before = edge_index.shape[1]
+            self.logger_a.numel_after = self.idx_keep.shape[0]
+            edge_index = edge_index[:, self.idx_keep]
+            edge_weight = edge_weight[self.idx_keep]
+        '''
+
         # propagate_type: (x: Tensor, edge_weight: OptTensor)
         # self.norm_all_node = torch.norm(x, dim=None) / x.shape[0]
         out = self.propagate(edge_index, x=x, edge_weight=edge_weight, size=None)

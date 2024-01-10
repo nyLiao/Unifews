@@ -111,3 +111,7 @@ class GNNThr(nn.Module):
                 x = self.dropout(x)
             x = self.convs[-1](x, edge_idx)
             return x
+
+    @classmethod
+    def batch_counter_hook(cls, module, input, output):
+        module.__batch_counter__ += 1

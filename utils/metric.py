@@ -34,7 +34,7 @@ class F1Calculator(object):
             raise ValueError('average must be "micro" or "macro"')
 
 
-class Stopwatch:
+class Stopwatch(object):
     def __init__(self):
         self.reset()
 
@@ -58,6 +58,24 @@ class Stopwatch:
     @property
     def time(self) -> float:
         return self.elapsed_sec
+
+
+class Accumulator(object):
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.count = 0
+
+    def update(self, val: float, count: int=1):
+        self.val += val
+        self.count += count
+        return self.val
+
+    @property
+    def avg(self) -> float:
+        return self.val / self.count
 
 
 def get_ram() -> float:

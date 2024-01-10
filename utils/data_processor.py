@@ -271,6 +271,14 @@ class DataProcess(object):
                 self.role['tr'] = self.idx_train.tolist()
                 self.role['va'] = self.idx_val.tolist()
                 self.role['te'] = self.idx_test.tolist()
+            elif key == 'mask':
+                self.mask = {}
+                self.mask['tr'] = np.zeros(self.n, dtype=bool)
+                self.mask['va'] = np.zeros(self.n, dtype=bool)
+                self.mask['te'] = np.zeros(self.n, dtype=bool)
+                self.mask['tr'][self.idx_train] = True
+                self.mask['va'][self.idx_val] = True
+                self.mask['te'][self.idx_test] = True
             elif key == 'edge_idx':
                 self.edge_idx = self.adj_matrix.tocoo().copy()
                 self.edge_idx = np.vstack([self.edge_idx.row, self.edge_idx.col])

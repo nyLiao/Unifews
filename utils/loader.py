@@ -50,6 +50,7 @@ def load_edgelist(datastr: str, datapath: str="./data/",
     else:
         adj['train'] = adj['test']
     # Get node attributes
+    # TODO: feat norm
     feat = {'test': torch.FloatTensor(dp.attr_matrix)}
     feat['train'] = torch.FloatTensor(dpi.attr_matrix) if inductive else feat['test']
 

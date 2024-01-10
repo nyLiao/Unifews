@@ -72,6 +72,13 @@ class Logger(object):
             f.write(str(s) + '\n')
             f.write(temp)
 
+    def print_header(self, hs, s) -> None:
+        if os.path.isfile(self.file_log):
+            print(hs)
+        else:
+            self.print(hs.replace('|', ','))
+        self.print(s)
+
     def save_opt(self, opt: DotMap) -> None:
         os.makedirs(self.dir_save, exist_ok=True)
         with open(self.file_config, 'w') as f:
@@ -88,6 +95,20 @@ class Logger(object):
         print("Config path: {}".format(self.file_config))
         print("Option dict: {}\n".format(opt.toDict()))
         return opt
+
+    def str_csv(self, data, algo, seed,
+               acc_test, conv_epoch, epoch, time_train, macs_train,
+               time_test, macs_test, mem_ram, mem_cuda, num_param, mem_param):
+        hstr, cstr = '', ''
+        hstr += f"  Data    |  Model   | Seed | "
+        cstr += f"{data:10s},{algo:10s},{seed:6s},"
+        hstr += f"Acc   | Cn | EP | "
+        cstr += f"{acc_test:7.5f},{conv_epoch:4d},{epoch:4d},"
+        hstr += f"Ttrain | Ctrain | "
+        cstr += f"{time_train:8.4f},{macs_train:8.4f},"
+        hstr += f"Ttest  | CTest  | RAM   | CUDA  | #Param | MParam "
+        cstr += f"{time_test:8.4f},{macs_test:8.4f},{mem_ram:7.3f},{mem_cuda:7.3f},{num_param:8.4f},{mem_param:8.4f}"
+        return hstr, cstr
 
 
 class ModelLogger(object):

@@ -45,9 +45,9 @@ def identity_n_norm(edge_index, edge_weight=None, num_nodes=None,
     raise NotImplementedError()
 
 # ==========
-class ConvTrh(nn.Module):
+class ConvThr(nn.Module):
     def __init__(self, *args, **kwargs):
-        super(ConvTrh, self).__init__(*args, **kwargs)
+        super(ConvThr, self).__init__(*args, **kwargs)
         self.threshold_a = None
         self.threshold_w = None
         self.idx_keep = None
@@ -84,11 +84,11 @@ class GCNConvRaw(pyg_nn.GCNConv):
         module.__flops__ += f_in * m
 
 
-class GCNConvThr(GCNConvRaw, ConvTrh):
+class GCNConvThr(GCNConvRaw, ConvThr):
     def __init__(self, *args, **kwargs):
         super(GCNConvThr, self).__init__(*args, **kwargs)
-        self.threshold_a = 0.4
-        self.threshold_w = 1e-2
+        self.threshold_a = 0.75
+        self.threshold_w = 0.3
         self.prune_lst = [self.lin]
 
         # self.register_propagate_forward_pre_hook(self.prune_edge)
@@ -130,9 +130,9 @@ class GCNConvThr(GCNConvRaw, ConvTrh):
         # Edge pruning
         if self.training:
             norm_feat = torch.norm(output, dim=1)       # each entry accross all features
-            norm_all = torch.norm(norm_feat, dim=None)
-            mask_0 = norm_feat/output.shape[1] < self.threshold_a * norm_all/output.shape[0]
-            # mask_0 = norm_feat/output.shape[1] < self.threshold_a * self.norm_all
+            norm_all_msg = torch.norm(norm_feat, dim=None)
+            mask_0 = norm_feat/output.shape[1] < self.threshold_a * norm_all_msg/output.shape[0]
+            # mask_0 = norm_feat/output.shape[1] < self.threshold_a * self.norm_all_node
             mask_0[self.idx_lock] = False
             output[mask_0] = 0
             self.idx_keep = torch.where(~mask_0)[0]
@@ -158,6 +158,7 @@ class GCNConvThr(GCNConvRaw, ConvTrh):
         """
         (edge_index, edge_weight) = edge_tuple
         # Weight pruning
+        # TODO: graduate prune and regrow
         if self.training:
             '''Shape:
                 threshold_wi [F_in]
@@ -181,7 +182,7 @@ class GCNConvThr(GCNConvRaw, ConvTrh):
         self.idx_lock = torch.cat((self.idx_lock, idx_diag))
         self.idx_lock = torch.unique(self.idx_lock)
         # propagate_type: (x: Tensor, edge_weight: OptTensor)
-        # self.norm_all = torch.norm(x, dim=None) / x.shape[0]
+        # self.norm_all_node = torch.norm(x, dim=None) / x.shape[0]
         out = self.propagate(edge_index, x=x, edge_weight=edge_weight, size=None)
 
         if self.bias is not None:
@@ -191,8 +192,8 @@ class GCNConvThr(GCNConvRaw, ConvTrh):
         if self.training or self.counting:
             self.logger_a.numel_before = edge_index.shape[1]
             self.logger_a.numel_after = self.idx_keep.shape[0]
-            if verbose:
-                print(f"  A: {self.logger_a}, W: {self.logger_w}")
+            # if verbose:
+            #     print(f"  A: {self.logger_a}, W: {self.logger_w}")
 
         # >>>>>>>>>>
             edge_index = edge_index[:, self.idx_keep]
@@ -211,7 +212,7 @@ class GCNConvThr(GCNConvRaw, ConvTrh):
         flops_bias = f_out if module.lin.bias is not None else 0
         module.__flops__ += int((f_in * f_out * module.logger_w.ratio + flops_bias) * n)
         # Message
-        module.__flops__ += f_in * m
+        module.__flops__ += f_in * (m - n)
 
 
 class GINConvRaw(pyg_nn.GINConv):
@@ -263,7 +264,7 @@ class GATv2ConvRaw(pyg_nn.GATv2Conv):
             module.__flops__ += n
 
 
-class GATv2ConvThr(GATv2ConvRaw, ConvTrh):
+class GATv2ConvThr(GATv2ConvRaw, ConvThr):
     def __init__(self, *args, **kwargs):
         super(GATv2ConvThr, self).__init__(*args, **kwargs)
         self.threshold_a = 5e-4
@@ -385,9 +386,9 @@ class GATv2ConvThr(GATv2ConvRaw, ConvTrh):
         flops_lin = int(flops_lin * module.logger_w.ratio)
         module.__flops__ += flops_lin
         # Message
-        flops_attn  = f_c * m                # relu
-        flops_attn += f_c * f_c * m          # alpha
-        flops_attn += 2 * m                  # softmax & attention
+        flops_attn  = f_c * (m - n)          # relu
+        flops_attn += f_c * f_c * (m - n)    # alpha
+        flops_attn += 2 * (m - n)            # softmax & attention
         flops_attn *= f_h
         module.__flops__ += flops_attn
         # Bias and concat

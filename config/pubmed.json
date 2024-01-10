@@ -4,7 +4,6 @@
     "algo": "gcn",
     "epochs": 2,
     "patience": 50,
-    "batch": 64,
     "lr": 0.001,
     "weight_decay": 1e-5,
     "layer": 3,

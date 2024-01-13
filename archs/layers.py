@@ -68,15 +68,15 @@ class GCNConvRaw(pyg_nn.GCNConv):
         super(GCNConvRaw, self).__init__(*args, **kwargs)
         self.logger_a = LayerNumLogger()        # sparsity of adjacancy matrix
         self.logger_w = LayerNumLogger()        # sparsity of weight matrix
-        self.logger_n = LayerNumLogger()        # sparsity of node feature matrix
-        self.logger_m = LayerNumLogger()        # sparsity of message matrix
+        self.logger_in = LayerNumLogger()        # sparsity of node feature matrix
+        self.logger_msg = LayerNumLogger()        # sparsity of message matrix
 
     def forward(self, x: Tensor, edge_tuple: Tuple, **kwargs):
         (edge_index, edge_weight) = edge_tuple
         self.logger_a.numel_after = edge_index.shape[1]
         self.logger_w.numel_after = self.lin.weight.numel()
-        self.logger_n.numel_before = x.numel()
-        self.logger_n.numel_after = torch.sum(x != 0).item()
+        self.logger_in.numel_before = x.numel()
+        self.logger_in.numel_after = torch.sum(x != 0).item()
         return super().forward(x, edge_index, edge_weight)
 
     @classmethod
@@ -122,7 +122,7 @@ class GCNConvThr(ConvThr, GCNConvRaw):
         x, edge_weight = kwargs['x'], kwargs['edge_weight']
 
         if self.training:
-            norm_feat_node = torch.norm(x, dim=1)/x.shape[1]       # each node accross all features
+            norm_feat_node = torch.norm(x, dim=1)       # each node accross all features
             norm_all_node = torch.norm(norm_feat_node, dim=None)/x.shape[0]
             mask_0 = edge_weight < self.threshold_a / norm_feat_node[edge_index[0]] * norm_all_node
             mask_0[self.idx_lock] = False
@@ -154,15 +154,14 @@ class GCNConvThr(ConvThr, GCNConvRaw):
             output [m, F]: message value of each edge after message and pending aggregate
         '''
         x_j = inputs[0]['x_j']
-        self.logger_m.numel_before = x_j.numel()
-        self.logger_m.numel_after = torch.sum(x_j != 0).item()
+        self.logger_msg.numel_before = x_j.numel()
+        self.logger_msg.numel_after = torch.sum(x_j != 0).item()
 
         # Edge pruning
         if self.training:
-            norm_feat_edge = torch.norm(output, dim=1)       # each entry accross all features
-            norm_all_out = torch.norm(norm_feat_edge, dim=None)/output.shape[0]
-            norm_feat_edge /= output.shape[1]
-            mask_0 = norm_feat_edge < self.threshold_a * norm_all_out
+            norm_feat_msg = torch.norm(output, dim=1)       # each entry accross all features
+            norm_all_msg = torch.norm(norm_feat_msg, dim=None, p=1)/output.shape[0]
+            mask_0 = norm_feat_msg < self.threshold_a * norm_all_msg
             # mask_0 = norm_feat < self.threshold_a * self.norm_all_node
             mask_0[self.idx_lock] = False
             output[mask_0] = 0
@@ -181,8 +180,8 @@ class GCNConvThr(ConvThr, GCNConvRaw):
             x (Tensor [n, F_in]): node feature matrix
         """
         (edge_index, edge_weight) = edge_tuple
-        self.logger_n.numel_before = x.numel()
-        self.logger_n.numel_after = torch.sum(x != 0).item()
+        self.logger_in.numel_before = x.numel()
+        self.logger_in.numel_after = torch.sum(x != 0).item()
         # Weight pruning
         # TODO: graduate prune and regrow
         if self.training:
@@ -190,9 +189,11 @@ class GCNConvThr(ConvThr, GCNConvRaw):
                 threshold_wi [F_in]
                 self.lin.weight [F_out, F_in]
             '''
-            # TODO: change to norm
-            threshold_wi = self.threshold_w / torch.norm(x, dim=0)
-            ThrInPrune.apply(self.lin, 'weight', threshold_wi)
+            norm_node_in = torch.norm(x, dim=0)
+            norm_all_in = torch.norm(norm_node_in, dim=None)/x.shape[1]
+            if norm_all_in > 1e-8:
+                threshold_wi = self.threshold_w * norm_all_in / norm_node_in
+                ThrInPrune.apply(self.lin, 'weight', threshold_wi)
             x = self.lin(x)
 
             self.logger_w.numel_before = self.lin.weight.numel()
@@ -214,7 +215,6 @@ class GCNConvThr(ConvThr, GCNConvRaw):
             norm_feat_node = torch.norm(x, dim=1)       # each node accross all features
             norm_all_node = torch.norm(norm_feat_node, dim=None)/x.shape[0]
             # norm_all_msg = torch.norm(norm_feat_node[edge_index[0]], dim=None)/edge_weight.shape[0]
-            norm_feat_node /= x.shape[1]
             mask_0 = edge_weight < self.threshold_a / norm_feat_node[edge_index[0]] * norm_all_node
             mask_0[self.idx_lock] = False
             self.idx_keep = torch.where(~mask_0)[0]
@@ -274,6 +274,8 @@ class GATv2ConvRaw(pyg_nn.GATv2Conv):
         super(GATv2ConvRaw, self).__init__(in_channels, out_channels, heads, concat, **kwargs)
         self.logger_a = LayerNumLogger()
         self.logger_w = LayerNumLogger()
+        self.logger_in = LayerNumLogger()
+        self.logger_msg = LayerNumLogger()
 
     def forward(self, x: Tensor, edge_index: Adj,
                 edge_weight: OptTensor = None, **kwargs):
@@ -327,9 +329,12 @@ class GATv2ConvThr(ConvThr, GATv2ConvRaw):
 
         # Weight pruning
         if self.training:
-            threshold_wi = self.threshold_w / torch.norm(x, dim=0)
-            ThrInPrune.apply(self.lin_l, 'weight', threshold_wi)
-            ThrInPrune.apply(self.lin_r, 'weight', threshold_wi)
+            norm_node_in = torch.norm(x, dim=0)
+            norm_all_in = torch.norm(norm_node_in, dim=None)/x.shape[1]
+            if norm_all_in > 1e-8:
+                threshold_wi = self.threshold_w * norm_all_in / norm_node_in
+                ThrInPrune.apply(self.lin_l, 'weight', threshold_wi)
+                ThrInPrune.apply(self.lin_r, 'weight', threshold_wi)
             x_l = self.lin_l(x).view(-1, H, C)
             x_r = x_l if self.share_weights else self.lin_r(x).view(-1, H, C)
 
@@ -348,12 +353,9 @@ class GATv2ConvThr(ConvThr, GATv2ConvRaw):
         idx_diag = torch.where(edge_index[0] == edge_index[1])[0]
         self.idx_lock = torch.cat((self.idx_lock, idx_diag))
         self.idx_lock = torch.unique(self.idx_lock)
+
         # propagate_type: (x: PairTensor, edge_attr: OptTensor)
         out = self.propagate(edge_index, x=(x_l, x_r), edge_attr=edge_attr, size=None)
-
-        # alpha = self._alpha
-        # assert alpha is not None
-        # self._alpha = None
 
         if self.concat:
             out = out.view(-1, self.heads * self.out_channels)
@@ -366,8 +368,8 @@ class GATv2ConvThr(ConvThr, GATv2ConvRaw):
         if self.training or self.counting:
             self.logger_a.numel_before = edge_index.shape[1]
             self.logger_a.numel_after = self.idx_keep.shape[0]
-            if verbose:
-                print(f"  A: {self.logger_a}, W: {self.logger_w}")
+            # if verbose:
+            #     print(f"  A: {self.logger_a}, W: {self.logger_w}")
 
             edge_index = edge_index[:, self.idx_keep]
             # if edge_attr is not None:
@@ -391,15 +393,18 @@ class GATv2ConvThr(ConvThr, GATv2ConvRaw):
             edge_attr = self.lin_edge(edge_attr)
             edge_attr = edge_attr.view(-1, self.heads, self.out_channels)
             x = x + edge_attr
+        self.logger_msg.numel_before = x.numel()
+        self.logger_msg.numel_after = torch.sum(x != 0).item()
 
         x = F.leaky_relu(x, self.negative_slope)
         alpha = (x * self.att).sum(dim=-1)
         alpha = softmax(alpha, index, ptr, size_i)
 
         # Edge pruning
-        # TODO: change to norm
         if self.training:
-            threshold_aj = self.threshold_a / (torch.norm(x_j, dim=[1,2])/x_j.shape[1]/x_j.shape[2])
+            norm_feat_msg = torch.norm(x_j, dim=[1,2])
+            norm_all_msg = torch.norm(norm_feat_msg, dim=None, p=1)/x_j.shape[0]
+            threshold_aj = self.threshold_a * norm_all_msg / norm_feat_msg
             mask_0 = torch.norm(alpha, dim=1)/alpha.shape[1] < threshold_aj
             mask_0[self.idx_lock] = False
             alpha[mask_0] = 0

@@ -32,6 +32,8 @@ class ThrInPrune(prune.BasePruningMethod):
             t (Tensor [F_out, F_in]): tensor to prune
         """
         assert self.threshold.shape == t.shape[1:]
+        tmax = t.abs().max() * (1 - 1e-3)
+        self.threshold[self.threshold > tmax] = tmax
         mask = default_mask.clone(memory_format=torch.contiguous_format)
         mask[t.abs() < self.threshold] = 0
         return mask

@@ -1,5 +1,5 @@
 ALGO=gcn_thr
-for DATASTR in arxiv
+for DATASTR in citeseer
 do
     # for THRA in 0.3 0.5 0.7 0.9 1.2 1.5 1.8
     for THRA in 0.3 0.7 1.2 1.5 1.8

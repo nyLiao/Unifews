@@ -203,8 +203,10 @@ class GCNConvThr(ConvThr, GCNConvRaw):
             # if prune.is_pruned(self.lin):
             #     prune.remove(self.lin, 'weight')
 
+        # <<<<<<<<<< performance sensitive
         # Lock edges ending at node_lock
-        self.idx_lock = torch.where(edge_index[1].to(node_lock.device).unsqueeze(0) == node_lock.unsqueeze(1))[1]
+        # self.idx_lock = torch.where(edge_index[1].to(node_lock.device).unsqueeze(0) == node_lock.unsqueeze(1))[1]
+        self.idx_lock = torch.where(edge_index[1].unsqueeze(0) == node_lock.to(edge_index.device).unsqueeze(1))[1]
         # Lock self-loop edges
         idx_diag = torch.where(edge_index[0] == edge_index[1])[0].to(self.idx_lock.device)
         self.idx_lock = torch.cat((self.idx_lock, idx_diag))

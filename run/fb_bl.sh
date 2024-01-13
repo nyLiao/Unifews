@@ -1,5 +1,5 @@
 ALGO=gcn
-for DATASTR in arxiv
+for DATASTR in citeseer
 do
     for SEED in 41 42 43
     do

@@ -36,7 +36,7 @@ if args.dev >= 0:
     with torch.cuda.device(args.dev):
         torch.cuda.manual_seed(args.seed)
 
-flag_run = str(args.seed)
+flag_run = f"{args.seed}-{args.thr_a}-{args.thr_w}"
 logger = Logger(args.data, args.algo, flag_run=flag_run)
 if args.seed > 20:
     print(args.toDict())
@@ -164,9 +164,11 @@ for epoch in range(1, args.epochs+1):
             print(res)
     # Early stop if converge
     acc_best = model_logger.save_best(acc_val, epoch=epoch)
-    epoch_conv = epoch
     if model_logger.is_early_stop(epoch=epoch):
-        break
+        pass
+    #     break
+    else:
+        epoch_conv = epoch - model_logger.patience
 
 # ========== Test
 # print('-' * 20, flush=True)
@@ -189,13 +191,13 @@ macs_test = get_flops(x=feat['test'], edge_idx=adj['test'], idx_split=idx['test'
 if args.seed >= 5:
     print(f"[Val] best acc: {acc_best:0.4f} (epoch: {epoch_conv}/{epoch}), [Test] best acc: {acc_test:0.4f}", flush=True)
 if args.seed >= 15:
-    print(f"[Train] time: {time_tol.val:0.4f} s (avg: {time_tol.avg*1000:0.1f} ms), MACs: {macs_tol.val:0.4f} G (avg: {macs_tol.avg:0.1f} G)")
-    print(f"[Test]  time: {time_test:0.4f} s, MACs: {macs_test:0.4f} G, Num adj: {numel_a:0.3f} k, Num weight: {numel_w:0.3f} M")
+    print(f"[Train] time: {time_tol.val:0.4f} s (avg: {time_tol.avg*1000:0.1f} ms), MACs: {macs_tol.val:0.3f} G (avg: {macs_tol.avg:0.1f} G)")
+    print(f"[Test]  time: {time_test:0.4f} s, MACs: {macs_test:0.4f} G, Num adj: {numel_a:0.3f} k, Num weight: {numel_w:0.3f} k")
     # print(f"RAM: {mem_ram:.3f} GB, CUDA: {mem_cuda:.3f} GB, Num params: {num_param:0.4f} M, Mem params: {mem_param:0.4f} MB")
 if args.seed >= 25:
     logger_tab = Logger(args.data, args.algo, flag_run=flag_run, dir=('./save', args.data))
     logger_tab.file_log = logger_tab.path_join('log.csv')
-    hstr, cstr = logger_tab.str_csv(data=args.data, algo=args.algo, seed=flag_run, thr_a=args.thr_a, thr_w=args.thr_w,
+    hstr, cstr = logger_tab.str_csv(data=args.data, algo=args.algo, seed=args.seed, thr_a=args.thr_a, thr_w=args.thr_w,
                                     acc_test=acc_test, conv_epoch=epoch_conv, epoch=epoch,
                                     time_train=time_tol.val, macs_train=macs_tol.val,
                                     time_test=time_test, macs_test=macs_test, numel_a=numel_a, numel_w=numel_w)

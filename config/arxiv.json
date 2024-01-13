@@ -1,5 +1,5 @@
 {
-    "data": "pubmed",
+    "data": "arxiv",
     "path": "./data/",
     "algo": "gcn_thr",
     "epochs": 200,

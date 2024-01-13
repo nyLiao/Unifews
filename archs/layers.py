@@ -75,8 +75,8 @@ class GCNConvRaw(pyg_nn.GCNConv):
         (edge_index, edge_weight) = edge_tuple
         self.logger_a.numel_after = edge_index.shape[1]
         self.logger_w.numel_after = self.lin.weight.numel()
-        self.logger_in.numel_before = x.numel()
-        self.logger_in.numel_after = torch.sum(x != 0).item()
+        # self.logger_in.numel_before = x.numel()
+        # self.logger_in.numel_after = torch.sum(x != 0).item()
         return super().forward(x, edge_index, edge_weight)
 
     @classmethod
@@ -153,9 +153,9 @@ class GCNConvThr(ConvThr, GCNConvRaw):
                 edge_weight [m]
             output [m, F]: message value of each edge after message and pending aggregate
         '''
-        x_j = inputs[0]['x_j']
-        self.logger_msg.numel_before = x_j.numel()
-        self.logger_msg.numel_after = torch.sum(x_j != 0).item()
+        # x_j = inputs[0]['x_j']
+        # self.logger_msg.numel_before = x_j.numel()
+        # self.logger_msg.numel_after = torch.sum(x_j != 0).item()
 
         # Edge pruning
         if self.training:
@@ -180,8 +180,8 @@ class GCNConvThr(ConvThr, GCNConvRaw):
             x (Tensor [n, F_in]): node feature matrix
         """
         (edge_index, edge_weight) = edge_tuple
-        self.logger_in.numel_before = x.numel()
-        self.logger_in.numel_after = torch.sum(x != 0).item()
+        # self.logger_in.numel_before = x.numel()
+        # self.logger_in.numel_after = torch.sum(x != 0).item()
         # Weight pruning
         # TODO: graduate prune and regrow
         if self.training:
@@ -204,9 +204,9 @@ class GCNConvThr(ConvThr, GCNConvRaw):
             #     prune.remove(self.lin, 'weight')
 
         # Lock edges ending at node_lock
-        self.idx_lock = torch.where(edge_index[1].unsqueeze(0) == node_lock.to(edge_index.device).unsqueeze(1))[1]
+        self.idx_lock = torch.where(edge_index[1].to(node_lock.device).unsqueeze(0) == node_lock.unsqueeze(1))[1]
         # Lock self-loop edges
-        idx_diag = torch.where(edge_index[0] == edge_index[1])[0]
+        idx_diag = torch.where(edge_index[0] == edge_index[1])[0].to(self.idx_lock.device)
         self.idx_lock = torch.cat((self.idx_lock, idx_diag))
         self.idx_lock = torch.unique(self.idx_lock)
 

@@ -106,11 +106,11 @@ class Logger(object):
                time_test, macs_test, numel_a, numel_w):
         hstr, cstr = '', ''
         hstr += f"  Data    |  Model   | Seed | ThA | ThW | "
-        cstr += f"{data:10s},{algo:10s},{seed:6s},{thr_a:5.3f},{thr_w:5.3f},"
+        cstr += f"{data:10s},{algo:10s},{seed:6d},{thr_a:5.3f},{thr_w:5.3f},"
         hstr += f"Acc   | Cn | EP | "
         cstr += f"{acc_test:7.5f},{conv_epoch:4d},{epoch:4d},"
         hstr += f"Ttrain | Ctrain | "
-        cstr += f"{time_train:8.4f},{macs_train:8.4f},"
+        cstr += f"{time_train:8.4f},{macs_train:8.3f},"
         hstr += f"Ttest  | CTest  | NumelA | NumelW "
         cstr += f"{time_test:8.4f},{macs_test:8.4f},{numel_a:8.3f},{numel_w:8.3f}"
         return hstr, cstr

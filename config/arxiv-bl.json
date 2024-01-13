@@ -1,7 +1,7 @@
 {
-    "data": "pubmed",
+    "data": "arxiv",
     "path": "./data/",
-    "algo": "gcn_thr",
+    "algo": "gcn",
     "epochs": 200,
     "patience": 20,
     "lr": 0.001,
@@ -9,8 +9,8 @@
     "layer": 2,
     "hidden": 512,
     "dropout": 0.5,
-    "thr_a": 0.5,
-    "thr_w": 0.5,
+    "thr_a": 0.0,
+    "thr_w": 0.0,
     "inductive": false,
     "multil": false
 }

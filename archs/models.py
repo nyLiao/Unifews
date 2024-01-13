@@ -122,7 +122,7 @@ class GNNThr(nn.Module):
     def get_numel(self):
         numel_a = sum([conv.logger_a.numel_after for conv in self.convs])
         numel_w = sum([conv.logger_w.numel_after for conv in self.convs])
-        return numel_a/1e3, numel_w/1e6
+        return numel_a/1e3, numel_w/1e3
 
     @classmethod
     def batch_counter_hook(cls, module, input, output):

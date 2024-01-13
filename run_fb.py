@@ -22,9 +22,11 @@ torch.set_printoptions(linewidth=160, edgeitems=5)
 # ========== Training settings
 parser = argparse.ArgumentParser()
 parser.add_argument('-f', '--seed', type=int, default=11, help='Random seed.')
-parser.add_argument('-c', '--config', type=str, default='./config/cora.json', help='Config file path.')
+parser.add_argument('-c', '--config', type=str, default='cora', help='Config file name.')
 parser.add_argument('-v', '--dev', type=int, default=1, help='Device id.')
 parser.add_argument('-n', '--suffix', type=str, default='', help='Save name suffix')
+parser.add_argument('-a', '--thr_a', type=float, default=None, help='Threshold of adj.')
+parser.add_argument('-w', '--thr_w', type=float, default=None, help='Threshold of weight.')
 args = prepare_opt(parser)
 
 random.seed(args.seed)
@@ -48,12 +50,12 @@ adj, feat, labels, idx, nfeat, nclass = load_edgelist(datastr=args.data, datapat
                 inductive=args.inductive, multil=args.multil, seed=args.seed)
 
 model = models.GNNThr(nlayer=args.layer, nfeat=nfeat, nhidden=args.hidden, nclass=nclass,
-                    dropout=args.dropout, layer=args.algo)
+                    thr_a=args.thr_a, thr_w=args.thr_w, dropout=args.dropout, layer=args.algo)
 model.reset_parameters()
 adj['train'] = identity_n_norm(adj['train'], edge_weight=None, num_nodes=feat['train'].shape[0],
                     rnorm=model.kwargs['rnorm'], diag=model.kwargs['diag'])
 if args.seed > 15:
-    print(type(model).__name__)
+    print(type(model).__name__, args.thr_a, args.thr_w)
 if args.seed > 20:
     print(model)
 model_logger.register(model, save_init=False)
@@ -137,7 +139,6 @@ def get_flops(x, edge_idx, idx_split, verbose=False):
 
 # ========== Train
 # print('-' * 20, flush=True)
-# print('Start training...')
 with torch.cuda.device(args.dev):
     torch.cuda.empty_cache()
 time_tol, macs_tol = metric.Accumulator(), metric.Accumulator()
@@ -194,7 +195,7 @@ if args.seed >= 15:
 if args.seed >= 25:
     logger_tab = Logger(args.data, args.algo, flag_run=flag_run, dir=('./save', args.data))
     logger_tab.file_log = logger_tab.path_join('log.csv')
-    hstr, cstr = logger_tab.str_csv(data=args.data, algo=args.algo, seed=flag_run,
+    hstr, cstr = logger_tab.str_csv(data=args.data, algo=args.algo, seed=flag_run, thr_a=args.thr_a, thr_w=args.thr_w,
                                     acc_test=acc_test, conv_epoch=epoch_conv, epoch=epoch,
                                     time_train=time_tol.val, macs_train=macs_tol.val,
                                     time_test=time_test, macs_test=macs_test, numel_a=numel_a, numel_w=numel_w)

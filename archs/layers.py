@@ -46,10 +46,10 @@ def identity_n_norm(edge_index, edge_weight=None, num_nodes=None,
 
 # ==========
 class ConvThr(nn.Module):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, thr_a, thr_w, **kwargs):
         super(ConvThr, self).__init__(*args, **kwargs)
-        self.threshold_a = None
-        self.threshold_w = None
+        self.threshold_a = thr_a
+        self.threshold_w = thr_w
         self.idx_keep = None
         self.prune_lst = []
         self.counting = False
@@ -96,11 +96,9 @@ class GCNConvRaw(pyg_nn.GCNConv):
         module.__flops__ += f_in * m
 
 
-class GCNConvThr(GCNConvRaw, ConvThr):
-    def __init__(self, *args, **kwargs):
-        super(GCNConvThr, self).__init__(*args, **kwargs)
-        self.threshold_a = 0.75
-        self.threshold_w = 0.3
+class GCNConvThr(ConvThr, GCNConvRaw):
+    def __init__(self, *args, thr_a, thr_w, **kwargs):
+        super(GCNConvThr, self).__init__(*args, thr_a=thr_a, thr_w=thr_w, **kwargs)
         self.prune_lst = [self.lin]
 
         # self.register_propagate_forward_pre_hook(self.prune_on_ew)
@@ -112,6 +110,7 @@ class GCNConvThr(GCNConvRaw, ConvThr):
             E.g. in GCNConv, after `edge_index, edge_weight = gcn_norm()` and
             `x = self.lin(x)`
 
+        Apply pruning on edge_weight based on node feature norm
         Args:
         if not is_sparse(edge_index):
             edge_index [2, m]: start and end index of each edge
@@ -147,6 +146,7 @@ class GCNConvThr(GCNConvRaw, ConvThr):
         Called in propagate(), after `out = self.message(**msg_kwargs)`
             E.g. in GCNConv, after normalization: `edge_weight.view(-1, 1) * edge_index`
 
+        Apply pruning on message based on message norm
         Args:
             inputs
                 x_j [m, F]: node feature mapped by edge source nodes
@@ -174,13 +174,6 @@ class GCNConvThr(GCNConvRaw, ConvThr):
             mask_0[self.idx_lock] = False
             output[mask_0] = 0
         return output
-
-    # def reset_parameters(self):
-    #     super().reset_parameters()
-    #     self.lin.reset_parameters()
-    #     pyg_nn.inits.zeros(self.bias)
-    #     self._cached_edge_index = None
-    #     self._cached_adj_t = None
 
     def forward(self, x: Tensor, edge_tuple: Tuple,
                 node_lock: OptTensor = None, verbose: bool = False):
@@ -271,19 +264,6 @@ class GCNConvThr(GCNConvRaw, ConvThr):
         module.__flops__ += f_in * (m - n)
 
 
-class GINConvRaw(pyg_nn.GINConv):
-    def __init__(self, in_channels: int, out_channels: int,
-                 eps: float = 0., train_eps: bool = False, **kwargs):
-        nn_default = pyg_nn.MLP(
-            [in_channels, out_channels],
-        )
-        super(GINConvRaw, self).__init__(nn_default, eps, train_eps, **kwargs)
-
-
-class GCNIIConvRaw(pyg_nn.GCN2Conv):
-    pass
-
-
 class GATv2ConvRaw(pyg_nn.GATv2Conv):
     def __init__(self, in_channels: int, out_channels: int, depth: int,
                  heads: int = 1, concat: bool = True, **kwargs):
@@ -327,11 +307,9 @@ class GATv2ConvRaw(pyg_nn.GATv2Conv):
             module.__flops__ += n
 
 
-class GATv2ConvThr(GATv2ConvRaw, ConvThr):
-    def __init__(self, *args, **kwargs):
-        super(GATv2ConvThr, self).__init__(*args, **kwargs)
-        self.threshold_a = 5e-4
-        self.threshold_w = 1e-2
+class GATv2ConvThr(ConvThr, GATv2ConvRaw):
+    def __init__(self, *args, thr_a, thr_w, **kwargs):
+        super(GATv2ConvThr, self).__init__(*args, thr_a=thr_a, thr_w=thr_w, **kwargs)
         self.prune_lst = [self.lin_l, self.lin_r]
 
     def forward(self, x: Tensor, edge_index: Adj,
@@ -462,6 +440,19 @@ class GATv2ConvThr(GATv2ConvRaw, ConvThr):
             module.__flops__ += (f_c + 1) * n
         else:
             module.__flops__ += n
+
+
+class GINConvRaw(pyg_nn.GINConv):
+    def __init__(self, in_channels: int, out_channels: int,
+                 eps: float = 0., train_eps: bool = False, **kwargs):
+        nn_default = pyg_nn.MLP(
+            [in_channels, out_channels],
+        )
+        super(GINConvRaw, self).__init__(nn_default, eps, train_eps, **kwargs)
+
+
+class GCNIIConvRaw(pyg_nn.GCN2Conv):
+    pass
 
 
 # ==========

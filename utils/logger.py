@@ -11,13 +11,18 @@ import torch.nn as nn
 
 def prepare_opt(parser) -> DotMap:
     # Parser to dict
-	opt_parser = vars(parser.parse_args())
-	# Config file to dict
-	config_path = opt_parser['config']
-	with open(config_path, 'r') as config_file:
-		opt_config = json.load(config_file)
-	# Merge dicts to dotmap
-	return DotMap({**opt_parser, **opt_config})
+    opt_parser = vars(parser.parse_args())
+    # Config file to dict
+    config_path = opt_parser['config']
+    if not os.path.isfile(config_path):
+        config_path = os.path.join('./config/', config_path + '.json')
+    with open(config_path, 'r') as config_file:
+        opt_config = json.load(config_file)
+    # Merge dicts to dotmap
+    for k, v in opt_parser.items():
+        if v is not None:
+            opt_config[k] = v
+    return DotMap(**opt_config)
 
 
 class Logger(object):
@@ -96,12 +101,12 @@ class Logger(object):
         print("Option dict: {}\n".format(opt.toDict()))
         return opt
 
-    def str_csv(self, data, algo, seed,
+    def str_csv(self, data, algo, seed, thr_a, thr_w,
                acc_test, conv_epoch, epoch, time_train, macs_train,
                time_test, macs_test, numel_a, numel_w):
         hstr, cstr = '', ''
-        hstr += f"  Data    |  Model   | Seed | "
-        cstr += f"{data:10s},{algo:10s},{seed:6s},"
+        hstr += f"  Data    |  Model   | Seed | ThA | ThW | "
+        cstr += f"{data:10s},{algo:10s},{seed:6s},{thr_a:5.3f},{thr_w:5.3f},"
         hstr += f"Acc   | Cn | EP | "
         cstr += f"{acc_test:7.5f},{conv_epoch:4d},{epoch:4d},"
         hstr += f"Ttrain | Ctrain | "

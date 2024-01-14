@@ -50,48 +50,74 @@ class Logger(object):
         self.file_log = self.path_join('log.txt')
         self.file_config = self.path_join('config.json')
 
+        flag_run = flag_run.split('-')[0]
+        seed = int(flag_run) if flag_run.isdigit() else 11
+        if seed < 10:
+            self.lvl_log = 0         # 0~9: nothing
+        elif seed < 20:
+            self.lvl_log = 1         # 10~19: funtional ouput
+        elif seed < 30:
+            self.lvl_log = 2         # 20~29: result per epoch
+        else:
+            self.lvl_log = 3         # 30~: print to file_log
+        if seed < 5:
+            self.lvl_config = 0      # 0~4: nothing
+        elif seed < 15:
+            self.lvl_config = 1      # 5~14: simple
+        elif seed < 25:
+            self.lvl_config = 2      # 15~: detailed
+        else:
+            self.lvl_config = 3      # 25~: save to file_config
+
     def path_join(self, *args) -> str:
         """
         Generate file path in current directory.
         """
         return os.path.join(self.dir_save, *args)
 
-    def print(self, s) -> None:
+    def print(self, s, sf=None) -> None:
         """
         Print string to console and write log file.
         """
-        print(s, flush=True)
-        with open(self.file_log, 'a') as f:
-            f.write(str(s) + '\n')
+        if self.lvl_log > 0:
+            print(s, flush=True)
+        if self.lvl_log > 2:
+            sf = s if sf is None else sf
+            with open(self.file_log, 'a') as f:
+                f.write(str(sf) + '\n')
 
     def print_on_top(self, s) -> None:
         """
         Print string on top of log file.
         """
-        print(s)
-        with open(self.file_log, 'a') as f:
-            pass
-        with open(self.file_log, 'r+') as f:
-            temp = f.read()
-            f.seek(0, 0)
-            f.write(str(s) + '\n')
-            f.write(temp)
+        if self.lvl_log > 0:
+            print(s)
+        if self.lvl_log > 2:
+            with open(self.file_log, 'a') as f:
+                pass
+            with open(self.file_log, 'r+') as f:
+                temp = f.read()
+                f.seek(0, 0)
+                f.write(str(s) + '\n')
+                f.write(temp)
 
     def print_header(self, hs, s) -> None:
-        if os.path.isfile(self.file_log):
-            print(hs)
-        else:
-            self.print(hs.replace('|', ','))
-        self.print(s)
+        if self.lvl_log > 0:
+            if os.path.isfile(self.file_log):
+                print(hs)
+            else:
+                self.print(hs, hs.replace('|', ','))
+            self.print(s)
 
     def save_opt(self, opt: DotMap) -> None:
-        os.makedirs(self.dir_save, exist_ok=True)
-        with open(self.file_config, 'w') as f:
-            json.dump(opt.toDict(), fp=f, indent=4, sort_keys=False)
-            f.write('\n')
-        print("Option saved.")
-        print("Config path: {}".format(self.file_config))
-        print("Option dict: {}\n".format(opt.toDict()))
+        if self.lvl_config > 2:
+            os.makedirs(self.dir_save, exist_ok=True)
+            with open(self.file_config, 'w') as f:
+                json.dump(opt.toDict(), fp=f, indent=4, sort_keys=False)
+                f.write('\n')
+            print("Option saved.")
+            print("Config path: {}".format(self.file_config))
+            print("Option dict: {}\n".format(opt.toDict()))
 
     def load_opt(self) -> DotMap:
         with open(self.file_config, 'r') as config_file:
@@ -105,13 +131,13 @@ class Logger(object):
                acc_test, conv_epoch, epoch, time_train, macs_train,
                time_test, macs_test, numel_a, numel_w):
         hstr, cstr = '', ''
-        hstr += f"  Data    |  Model   | Seed | ThA | ThW | "
+        hstr += f"      Data|     Model|  Seed|  ThA|  ThW| "
         cstr += f"{data:10s},{algo:10s},{seed:6d},{thr_a:5.3f},{thr_w:5.3f},"
-        hstr += f"Acc   | Cn | EP | "
+        hstr += f"   Acc|  Cn|  EP| "
         cstr += f"{acc_test:7.5f},{conv_epoch:4d},{epoch:4d},"
-        hstr += f"Ttrain | Ctrain | "
+        hstr += f" Ttrain|  Ctrain| "
         cstr += f"{time_train:8.4f},{macs_train:8.3f},"
-        hstr += f"Ttest  | CTest  | NumelA | NumelW "
+        hstr += f"  Ttest|   CTest|  NumelA|  NumelW"
         cstr += f"{time_test:8.4f},{macs_test:8.4f},{numel_a:8.3f},{numel_w:8.3f}"
         return hstr, cstr
 

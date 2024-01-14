@@ -1,5 +1,5 @@
-ALGO=gcn
-for DATASTR in cs
+ALGO=gat
+for DATASTR in pubmed
 do
     for SEED in 41 42 43
     do

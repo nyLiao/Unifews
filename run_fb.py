@@ -41,9 +41,7 @@ if not args.algo.endswith('_thr'):
     args.thr_a, args.thr_w = 0.0, 0.0
 flag_run = f"{args.seed}-{args.thr_a}-{args.thr_w}"
 logger = Logger(args.data, args.algo, flag_run=flag_run)
-if args.seed > 20:
-    print(args.toDict())
-    logger.save_opt(args)
+logger.save_opt(args)
 model_logger = ModelLogger(logger, patience=args.patience, cmp='max',
                            prefix='model'+args.suffix, storage='state_gpu')
 stopwatch = metric.Stopwatch()
@@ -57,9 +55,9 @@ model = models.GNNThr(nlayer=args.layer, nfeat=nfeat, nhidden=args.hidden, nclas
 model.reset_parameters()
 adj['train'] = identity_n_norm(adj['train'], edge_weight=None, num_nodes=feat['train'].shape[0],
                     rnorm=model.kwargs['rnorm'], diag=model.kwargs['diag'])
-if args.seed > 15:
+if logger.lvl_config > 1:
     print(type(model).__name__, args.thr_a, args.thr_w)
-if args.seed > 20:
+if logger.lvl_config > 2:
     print(model)
 model_logger.register(model, save_init=False)
 if args.dev >= 0:
@@ -153,7 +151,7 @@ time_tol, macs_tol = metric.Accumulator(), metric.Accumulator()
 epoch_conv, acc_best = 0, 0
 
 for epoch in range(1, args.epochs+1):
-    verbose = epoch % 1 == 0 and (args.seed >= 15)
+    verbose = epoch % 1 == 0 and (logger.lvl_log > 0)
     loss_train, time_epoch = train(x=feat['train'], edge_idx=adj['train'],
                                    y=labels['train'], idx_split=idx['train'],
                                    epoch=epoch, verbose=verbose)
@@ -166,15 +164,14 @@ for epoch in range(1, args.epochs+1):
 
     if verbose:
         res = f"Epoch:{epoch:04d} | train loss:{loss_train:.4f}, val acc:{acc_val:.4f}, time:{time_tol.val:.4f}, macs:{macs_tol.val:.4f}"
-        if args.seed > 20:
+        if logger.lvl_log > 1:
             logger.print(res)
-        else:
-            print(res)
-    # Early stop if converge
+
+    # Log convergence
     acc_best = model_logger.save_best(acc_val, epoch=epoch)
     if model_logger.is_early_stop(epoch=epoch):
         pass
-    #     break
+    #     break     # Enable to early stop
     else:
         epoch_conv = epoch - model_logger.patience
 
@@ -196,13 +193,13 @@ numel_a, numel_w = model.get_numel()
 macs_test = cal_flops(x=feat['test'], edge_idx=adj['test'], idx_split=idx['test'])
 
 # ========== Log
-if args.seed >= 5:
+if logger.lvl_config > 0:
     print(f"[Val] best acc: {acc_best:0.5f} (epoch: {epoch_conv}/{epoch}), [Test] best acc: {acc_test:0.5f}", flush=True)
-if args.seed >= 10:
+if logger.lvl_config > 1:
     print(f"[Train] time: {time_tol.val:0.4f} s (avg: {time_tol.avg*1000:0.1f} ms), MACs: {macs_tol.val:0.3f} G (avg: {macs_tol.avg:0.1f} G)")
     print(f"[Test]  time: {time_test:0.4f} s, MACs: {macs_test:0.4f} G, Num adj: {numel_a:0.3f} k, Num weight: {numel_w:0.3f} k")
     # print(f"RAM: {mem_ram:.3f} GB, CUDA: {mem_cuda:.3f} GB, Num params: {num_param:0.4f} M, Mem params: {mem_param:0.4f} MB")
-if args.seed >= 25:
+if logger.lvl_config > 2:
     logger_tab = Logger(args.data, args.algo, flag_run=flag_run, dir=('./save', args.data))
     logger_tab.file_log = logger_tab.path_join('log.csv')
     hstr, cstr = logger_tab.str_csv(data=args.data, algo=args.algo, seed=args.seed, thr_a=args.thr_a, thr_w=args.thr_w,

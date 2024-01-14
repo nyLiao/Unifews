@@ -88,8 +88,8 @@ class GCNConvRaw(pyg_nn.GCNConv):
         super(GCNConvRaw, self).__init__(*args, **kwargs)
         self.logger_a = LayerNumLogger()        # sparsity of adjacancy matrix
         self.logger_w = LayerNumLogger()        # sparsity of weight matrix
-        self.logger_in = LayerNumLogger()        # sparsity of node feature matrix
-        self.logger_msg = LayerNumLogger()        # sparsity of message matrix
+        self.logger_in = LayerNumLogger()       # sparsity of node feature matrix
+        self.logger_msg = LayerNumLogger()      # sparsity of message matrix
 
     def forward(self, x: Tensor, edge_tuple: Tuple, **kwargs):
         (edge_index, edge_weight) = edge_tuple

@@ -2,7 +2,7 @@
     "data": "cora",
     "path": "./data/",
     "algo": "gcn_thr",
-    "epochs": 200,
+    "epochs": 2,
     "patience": 20,
     "lr": 0.001,
     "weight_decay": 1e-5,

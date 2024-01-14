@@ -58,7 +58,7 @@ class ConvThr(nn.Module):
         # self.register_propagate_forward_hook(self.propagate_forward_print)
 
     def propagate_forward_print(self, module, inputs, output):
-        '''hook(self, (edge_index, size, kwargs), out)'''
+        """hook(self, (edge_index, size, kwargs), out)"""
         print(inputs[0], inputs[0].shape, inputs[1])
         print(output, output.shape)
 
@@ -105,7 +105,7 @@ class GCNConvThr(ConvThr, GCNConvRaw):
         self.register_message_forward_hook(self.prune_on_msg)
 
     def prune_on_ew(self, module, inputs): # -> None or inputs
-        '''hook(self, (edge_index, size, kwargs))
+        """hook(self, (edge_index, size, kwargs))
         Called before propagate().
             E.g. in GCNConv, after `edge_index, edge_weight = gcn_norm()` and
             `x = self.lin(x)`
@@ -117,31 +117,13 @@ class GCNConvThr(ConvThr, GCNConvRaw):
             edge_weight [m, F]: value of each edge pending distribute and message
         if is_sparse(edge_index):
             edge_index [n, n]: weighted (normalized) adj matrix
-        '''
+        """
         edge_index, size, kwargs = inputs
         x, edge_weight = kwargs['x'], kwargs['edge_weight']
-
-        if self.training:
-            norm_feat_node = torch.norm(x, dim=1)       # each node accross all features
-            norm_all_node = torch.norm(norm_feat_node, dim=None)/x.shape[0]
-            mask_0 = edge_weight < self.threshold_a / norm_feat_node[edge_index[0]] * norm_all_node
-            mask_0[self.idx_lock] = False
-            self.idx_keep = torch.where(~mask_0)[0]
-        elif self.counting:
-            mask_0 = torch.ones(edge_weight.shape[0], dtype=torch.bool)
-            mask_0[self.idx_keep] = False
-            mask_0[self.idx_lock] = False
-
-        if self.training or self.counting:
-            self.logger_a.numel_before = edge_index.shape[1]
-            self.logger_a.numel_after = self.idx_keep.shape[0]
-            edge_index = edge_index[:, self.idx_keep]
-            edge_weight = edge_weight[self.idx_keep]
-            size = (size[0], edge_weight.shape[0]) if size is not None else None
         return edge_index, size, {'x': x, 'edge_weight': edge_weight}
 
     def prune_on_msg(self, module, inputs, output): # -> None or output
-        '''res = hook(self, ({'x_j', 'edge_weight'}, ), output)
+        """res = hook(self, ({'x_j', 'edge_weight'}, ), output)
         Applicable only if not is_sparse(edge_index)
         Called in propagate(), after `out = self.message(**msg_kwargs)`
             E.g. in GCNConv, after normalization: `edge_weight.view(-1, 1) * edge_index`
@@ -152,7 +134,7 @@ class GCNConvThr(ConvThr, GCNConvRaw):
                 x_j [m, F]: node feature mapped by edge source nodes
                 edge_weight [m]
             output [m, F]: message value of each edge after message and pending aggregate
-        '''
+        """
         # x_j = inputs[0]['x_j']
         # self.logger_msg.numel_before = x_j.numel()
         # self.logger_msg.numel_after = torch.sum(x_j != 0).item()
@@ -205,32 +187,15 @@ class GCNConvThr(ConvThr, GCNConvRaw):
 
         # <<<<<<<<<< performance sensitive
         # Lock edges ending at node_lock
-        # self.idx_lock = torch.where(edge_index[1].to(node_lock.device).unsqueeze(0) == node_lock.unsqueeze(1))[1]
-        self.idx_lock = torch.where(edge_index[1].unsqueeze(0) == node_lock.to(edge_index.device).unsqueeze(1))[1]
+        self.idx_lock = torch.tensor([], dtype=torch.int32).to(edge_index.device)
+        bs = int(2**28 / edge_index.shape[1])
+        for i in range(0, node_lock.shape[0], bs):
+            batch = node_lock[i:min(i+bs, node_lock.shape[0])].to(edge_index.device)
+            self.idx_lock = torch.cat((self.idx_lock, torch.where(edge_index[1].unsqueeze(0) == batch.unsqueeze(1))[1]))
         # Lock self-loop edges
         idx_diag = torch.where(edge_index[0] == edge_index[1])[0].to(self.idx_lock.device)
         self.idx_lock = torch.cat((self.idx_lock, idx_diag))
         self.idx_lock = torch.unique(self.idx_lock)
-
-        ''' prune_on_ew implemet (2)
-        if self.training:
-            norm_feat_node = torch.norm(x, dim=1)       # each node accross all features
-            norm_all_node = torch.norm(norm_feat_node, dim=None)/x.shape[0]
-            # norm_all_msg = torch.norm(norm_feat_node[edge_index[0]], dim=None)/edge_weight.shape[0]
-            mask_0 = edge_weight < self.threshold_a / norm_feat_node[edge_index[0]] * norm_all_node
-            mask_0[self.idx_lock] = False
-            self.idx_keep = torch.where(~mask_0)[0]
-        elif self.counting:
-            self.idx_keep = torch.cat((self.idx_keep, self.idx_lock.clone())).to(self.idx_keep.device)
-            self.idx_keep = torch.unique(self.idx_keep, sorted=False)
-
-        # Edge removal
-        if self.training or self.counting:
-            self.logger_a.numel_before = edge_index.shape[1]
-            self.logger_a.numel_after = self.idx_keep.shape[0]
-            edge_index = edge_index[:, self.idx_keep]
-            edge_weight = edge_weight[self.idx_keep]
-        '''
 
         # propagate_type: (x: Tensor, edge_weight: OptTensor)
         # self.norm_all_node = torch.norm(x, dim=None) / x.shape[0]
@@ -250,6 +215,8 @@ class GCNConvThr(ConvThr, GCNConvRaw):
             edge_index = edge_index[:, self.idx_keep]
             edge_weight = edge_weight[self.idx_keep]
 
+        with torch.cuda.device(edge_index.device):
+            torch.cuda.empty_cache()
         return out, (edge_index, edge_weight)
 
     @classmethod

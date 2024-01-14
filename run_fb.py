@@ -22,9 +22,10 @@ torch.set_printoptions(linewidth=160, edgeitems=5)
 # ========== Training settings
 parser = argparse.ArgumentParser()
 parser.add_argument('-f', '--seed', type=int, default=11, help='Random seed.')
-parser.add_argument('-c', '--config', type=str, default='cora', help='Config file name.')
 parser.add_argument('-v', '--dev', type=int, default=1, help='Device id.')
-parser.add_argument('-n', '--suffix', type=str, default='', help='Save name suffix')
+parser.add_argument('-c', '--config', type=str, default='cora', help='Config file name.')
+parser.add_argument('-m', '--algo', type=str, default=None, help='Model name')
+parser.add_argument('-n', '--suffix', type=str, default='', help='Save name suffix.')
 parser.add_argument('-a', '--thr_a', type=float, default=None, help='Threshold of adj.')
 parser.add_argument('-w', '--thr_w', type=float, default=None, help='Threshold of weight.')
 args = prepare_opt(parser)
@@ -36,6 +37,8 @@ if args.dev >= 0:
     with torch.cuda.device(args.dev):
         torch.cuda.manual_seed(args.seed)
 
+if not args.algo.endswith('_thr'):
+    args.thr_a, args.thr_w = 0.0, 0.0
 flag_run = f"{args.seed}-{args.thr_a}-{args.thr_w}"
 logger = Logger(args.data, args.algo, flag_run=flag_run)
 if args.seed > 20:

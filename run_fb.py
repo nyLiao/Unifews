@@ -71,8 +71,13 @@ scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', fa
 loss_fn = nn.BCEWithLogitsLoss() if args.multil else nn.CrossEntropyLoss()
 
 
-def train(x, edge_idx, y, idx_split, verbose=False):
+def train(x, edge_idx, y, idx_split, epoch, verbose=False):
     model.train()
+    if epoch < args.epochs//2:
+        model.set_scheme('pruneall', 'pruneall')
+    else:
+        # model.set_scheme('pruneinc', 'pruneinc')
+        model.set_scheme('pruneall', 'pruneinc')
     x, y = x.cuda(args.dev), y.cuda(args.dev)
     if isinstance(edge_idx, tuple):
         edge_idx = (edge_idx[0].cuda(args.dev), edge_idx[1].cuda(args.dev))
@@ -93,6 +98,7 @@ def train(x, edge_idx, y, idx_split, verbose=False):
 
 def eval(x, edge_idx, y, idx_split, verbose=False):
     model.eval()
+    model.set_scheme('full', 'keep')
     x, y = x.cuda(args.dev), y.cuda(args.dev)
     if isinstance(edge_idx, tuple):
         edge_idx = (edge_idx[0].cuda(args.dev), edge_idx[1].cuda(args.dev))
@@ -121,9 +127,9 @@ def eval(x, edge_idx, y, idx_split, verbose=False):
     return res, stopwatch.time, output, y
 
 
-def get_flops(x, edge_idx, idx_split, verbose=False):
+def cal_flops(x, edge_idx, idx_split, verbose=False):
     model.eval()
-    model.apply(models.cnting_flops)
+    model.set_scheme('keep', 'keep')
     x = x.cuda(args.dev)
     if isinstance(edge_idx, tuple):
         edge_idx = (edge_idx[0].cuda(args.dev), edge_idx[1].cuda(args.dev))
@@ -136,7 +142,6 @@ def get_flops(x, edge_idx, idx_split, verbose=False):
                         input_constructor=lambda _: {'x': x, 'edge_idx': edge_idx},
                         custom_modules_hooks=flops_modules_dict,
                         as_strings=False, print_per_layer_stat=verbose, verbose=verbose)
-    model.apply(models.cnted_flops)
     return macs/1e9
 
 
@@ -148,15 +153,15 @@ time_tol, macs_tol = metric.Accumulator(), metric.Accumulator()
 epoch_conv, acc_best = 0, 0
 
 for epoch in range(1, args.epochs+1):
-    verbose = epoch % 1 == 0 and (args.seed >= 10)
+    verbose = epoch % 1 == 0 and (args.seed >= 15)
     loss_train, time_epoch = train(x=feat['train'], edge_idx=adj['train'],
                                    y=labels['train'], idx_split=idx['train'],
-                                   verbose=verbose)
+                                   epoch=epoch, verbose=verbose)
     time_tol.update(time_epoch)
     acc_val, _, _, _ = eval(x=feat['train'], edge_idx=adj['train'],
                             y=labels['val'], idx_split=idx['val'])
     scheduler.step(acc_val)
-    macs_epoch = get_flops(x=feat['train'], edge_idx=adj['train'], idx_split=idx['train'])
+    macs_epoch = cal_flops(x=feat['train'], edge_idx=adj['train'], idx_split=idx['train'])
     macs_tol.update(macs_epoch)
 
     if verbose:
@@ -188,12 +193,12 @@ acc_test, time_test, outl, labl = eval(x=feat['test'], edge_idx=adj['test'],
 # mem_ram, mem_cuda = metric.get_ram(), metric.get_cuda_mem(args.dev)
 # num_param, mem_param = metric.get_num_params(model), metric.get_mem_params(model)
 numel_a, numel_w = model.get_numel()
-macs_test = get_flops(x=feat['test'], edge_idx=adj['test'], idx_split=idx['test'])
+macs_test = cal_flops(x=feat['test'], edge_idx=adj['test'], idx_split=idx['test'])
 
 # ========== Log
 if args.seed >= 5:
-    print(f"[Val] best acc: {acc_best:0.4f} (epoch: {epoch_conv}/{epoch}), [Test] best acc: {acc_test:0.4f}", flush=True)
-if args.seed >= 15:
+    print(f"[Val] best acc: {acc_best:0.5f} (epoch: {epoch_conv}/{epoch}), [Test] best acc: {acc_test:0.5f}", flush=True)
+if args.seed >= 10:
     print(f"[Train] time: {time_tol.val:0.4f} s (avg: {time_tol.avg*1000:0.1f} ms), MACs: {macs_tol.val:0.3f} G (avg: {macs_tol.avg:0.1f} G)")
     print(f"[Test]  time: {time_test:0.4f} s, MACs: {macs_test:0.4f} G, Num adj: {numel_a:0.3f} k, Num weight: {numel_w:0.3f} k")
     # print(f"RAM: {mem_ram:.3f} GB, CUDA: {mem_cuda:.3f} GB, Num params: {num_param:0.4f} M, Mem params: {mem_param:0.4f} MB")

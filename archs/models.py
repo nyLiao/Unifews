@@ -40,13 +40,9 @@ def state2module(model, param_name):
     return module
 
 
-def cnting_flops(module):
-    if hasattr(module, 'counting'):
-        module.counting = True
-
-def cnted_flops(module):
-    if hasattr(module, 'counting'):
-        module.counting = False
+def set_attr(module, k, v):
+    if hasattr(module, k):
+        setattr(module, k, v)
 
 
 class GNNThr(nn.Module):
@@ -111,6 +107,10 @@ class GNNThr(nn.Module):
                 x = self.dropout(x)
             x = self.convs[-1](x, edge_idx)
             return x
+
+    def set_scheme(self, scheme_a, scheme_w):
+        self.apply(lambda module: set_attr(module, 'scheme_a', scheme_a))
+        self.apply(lambda module: set_attr(module, 'scheme_w', scheme_w))
 
     def remove(self):
         for conv in self.convs:

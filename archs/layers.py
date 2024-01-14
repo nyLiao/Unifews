@@ -50,9 +50,16 @@ class ConvThr(nn.Module):
         super(ConvThr, self).__init__(*args, **kwargs)
         self.threshold_a = thr_a
         self.threshold_w = thr_w
-        self.idx_keep = None
+        self.idx_keep = torch.Tensor([])
         self.prune_lst = []
-        self.counting = False
+        """
+            pruneall: regrow and fully prune
+            pruneinc: keep previous pruning and apply prune
+            keep: keep previous pruning
+            full: use full without pruning
+        """
+        self.scheme_a = 'full'
+        self.scheme_w = 'full'
 
         # self.register_aggregate_forward_hook(self.propagate_forward_print)
         # self.register_propagate_forward_hook(self.propagate_forward_print)
@@ -61,6 +68,19 @@ class ConvThr(nn.Module):
         """hook(self, (edge_index, size, kwargs), out)"""
         print(inputs[0], inputs[0].shape, inputs[1])
         print(output, output.shape)
+
+    def get_idx_lock(self, edge_index, node_lock):
+        # <<<<<<<<<< performance sensitive
+        # Lock edges ending at node_lock
+        idx_lock = torch.tensor([], dtype=torch.int32).to(edge_index.device)
+        bs = int(2**28 / edge_index.shape[1])
+        for i in range(0, node_lock.shape[0], bs):
+            batch = node_lock[i:min(i+bs, node_lock.shape[0])].to(edge_index.device)
+            idx_lock = torch.cat((idx_lock, torch.where(edge_index[1].unsqueeze(0) == batch.unsqueeze(1))[1]))
+        # Lock self-loop edges
+        idx_diag = torch.where(edge_index[0] == edge_index[1])[0].to(idx_lock.device)
+        idx_lock = torch.cat((idx_lock, idx_diag))
+        return torch.unique(idx_lock)
 
 
 class GCNConvRaw(pyg_nn.GCNConv):
@@ -133,23 +153,34 @@ class GCNConvThr(ConvThr, GCNConvRaw):
             inputs
                 x_j [m, F]: node feature mapped by edge source nodes
                 edge_weight [m]
-            output [m, F]: message value of each edge after message and pending aggregate
+            output [m, F]: message of each edge after message() and pending aggregate
         """
-        # x_j = inputs[0]['x_j']
-        # self.logger_msg.numel_before = x_j.numel()
-        # self.logger_msg.numel_after = torch.sum(x_j != 0).item()
-
         # Edge pruning
-        if self.training:
+        if self.scheme_a in ['pruneall', 'pruneinc']:
+            if self.scheme_a == 'pruneinc':
+                raise NotImplementedError()
+                # <<<<<<<<<< NOTE: previous idx may change when l>1
+                self.idx_keep = self.idx_keep.to(output.device)
+                mask_0 = torch.ones(output.shape[0], dtype=torch.bool, device=output.device)
+                mask_0[self.idx_keep] = False
+                output[mask_0] = 0
+            else:
+                mask_0 = torch.zeros(output.shape[0], dtype=torch.bool, device=output.device)
+            # self.logger_msg.numel_before = output.numel()
+            # self.logger_msg.numel_after = torch.sum(output != 0).item()
+
             norm_feat_msg = torch.norm(output, dim=1)       # each entry accross all features
             norm_all_msg = torch.norm(norm_feat_msg, dim=None, p=1)/output.shape[0]
-            mask_0 = norm_feat_msg < self.threshold_a * norm_all_msg
-            # mask_0 = norm_feat < self.threshold_a * self.norm_all_node
+            mask_cmp = norm_feat_msg < self.threshold_a * norm_all_msg
+            # mask_cmp = norm_feat < self.threshold_a * self.norm_all_node
+            mask_0 = torch.logical_or(mask_0, mask_cmp)
             mask_0[self.idx_lock] = False
             output[mask_0] = 0
             self.idx_keep = torch.where(~mask_0)[0]
         # >>>>>>>>>>
-        elif self.counting:
+        elif self.scheme_a == 'keep':
+            # self.logger_msg.numel_before = output.numel()
+            # self.logger_msg.numel_after = torch.sum(output != 0).item()
             mask_0 = torch.ones(output.shape[0], dtype=torch.bool)
             mask_0[self.idx_keep] = False
             mask_0[self.idx_lock] = False
@@ -158,19 +189,20 @@ class GCNConvThr(ConvThr, GCNConvRaw):
 
     def forward(self, x: Tensor, edge_tuple: Tuple,
                 node_lock: OptTensor = None, verbose: bool = False):
-        """Args:
+        """Shape:
             x (Tensor [n, F_in]): node feature matrix
+            threshold_wi [F_in]
+            self.lin.weight [F_out, F_in]
         """
         (edge_index, edge_weight) = edge_tuple
         # self.logger_in.numel_before = x.numel()
         # self.logger_in.numel_after = torch.sum(x != 0).item()
+
         # Weight pruning
-        # TODO: graduate prune and regrow
-        if self.training:
-            '''Shape:
-                threshold_wi [F_in]
-                self.lin.weight [F_out, F_in]
-            '''
+        if self.scheme_w in ['pruneall', 'pruneinc']:
+            if self.scheme_w == 'pruneall':
+                if prune.is_pruned(self.lin):
+                    prune.remove(self.lin, 'weight')
             norm_node_in = torch.norm(x, dim=0)
             norm_all_in = torch.norm(norm_node_in, dim=None)/x.shape[1]
             if norm_all_in > 1e-8:
@@ -180,24 +212,13 @@ class GCNConvThr(ConvThr, GCNConvRaw):
 
             self.logger_w.numel_before = self.lin.weight.numel()
             self.logger_w.numel_after = torch.sum(self.lin.weight != 0).item()
-        else:
+        elif self.scheme_w == 'keep':
             x = self.lin(x)
-            # if prune.is_pruned(self.lin):
-            #     prune.remove(self.lin, 'weight')
-
-        # <<<<<<<<<< performance sensitive
-        # Lock edges ending at node_lock
-        self.idx_lock = torch.tensor([], dtype=torch.int32).to(edge_index.device)
-        bs = int(2**28 / edge_index.shape[1])
-        for i in range(0, node_lock.shape[0], bs):
-            batch = node_lock[i:min(i+bs, node_lock.shape[0])].to(edge_index.device)
-            self.idx_lock = torch.cat((self.idx_lock, torch.where(edge_index[1].unsqueeze(0) == batch.unsqueeze(1))[1]))
-        # Lock self-loop edges
-        idx_diag = torch.where(edge_index[0] == edge_index[1])[0].to(self.idx_lock.device)
-        self.idx_lock = torch.cat((self.idx_lock, idx_diag))
-        self.idx_lock = torch.unique(self.idx_lock)
+        elif self.scheme_w == 'full':
+            raise NotImplementedError()
 
         # propagate_type: (x: Tensor, edge_weight: OptTensor)
+        self.idx_lock = self.get_idx_lock(edge_index, node_lock)
         # self.norm_all_node = torch.norm(x, dim=None) / x.shape[0]
         out = self.propagate(edge_index, x=x, edge_weight=edge_weight, size=None)
 
@@ -205,7 +226,7 @@ class GCNConvThr(ConvThr, GCNConvRaw):
             out = out + self.bias
 
         # Edge removal for next layer
-        if self.training or self.counting:
+        if self.scheme_a in ['pruneall', 'pruneinc', 'keep']:
             self.logger_a.numel_before = edge_index.shape[1]
             self.logger_a.numel_after = self.idx_keep.shape[0]
             # if verbose:
@@ -297,7 +318,11 @@ class GATv2ConvThr(ConvThr, GATv2ConvRaw):
         assert x.dim() == 2
 
         # Weight pruning
-        if self.training:
+        if self.scheme_w in ['pruneall', 'pruneinc']:
+            if self.scheme_w == 'pruneall':
+                if prune.is_pruned(self.lin_l):
+                    prune.remove(self.lin_l, 'weight')
+                    prune.remove(self.lin_r, 'weight')
             norm_node_in = torch.norm(x, dim=0)
             norm_all_in = torch.norm(norm_node_in, dim=None)/x.shape[1]
             if norm_all_in > 1e-8:
@@ -309,21 +334,14 @@ class GATv2ConvThr(ConvThr, GATv2ConvRaw):
 
             self.logger_w.numel_before = self.lin_l.weight.numel() + self.lin_r.weight.numel()
             self.logger_w.numel_after = torch.sum(self.lin_l.weight != 0).item() + torch.sum(self.lin_r.weight != 0).item()
-        else:
+        elif self.scheme_w == 'keep':
             x_l = self.lin_l(x).view(-1, H, C)
             x_r = x_l if self.share_weights else self.lin_r(x).view(-1, H, C)
-            # if prune.is_pruned(self.lin_l):
-            #     prune.remove(self.lin_l, 'weight')
-            #     prune.remove(self.lin_r, 'weight')
-
-        # Lock edges ending at node_lock
-        self.idx_lock = torch.where(edge_index[1].unsqueeze(0) == node_lock.to(edge_index.device).unsqueeze(1))[1]
-        # Lock self-loop edges
-        idx_diag = torch.where(edge_index[0] == edge_index[1])[0]
-        self.idx_lock = torch.cat((self.idx_lock, idx_diag))
-        self.idx_lock = torch.unique(self.idx_lock)
+        elif self.scheme_w == 'full':
+            raise NotImplementedError()
 
         # propagate_type: (x: PairTensor, edge_attr: OptTensor)
+        self.idx_lock = self.get_idx_lock(edge_index, node_lock)
         out = self.propagate(edge_index, x=(x_l, x_r), edge_attr=edge_attr, size=None)
 
         if self.concat:
@@ -334,7 +352,7 @@ class GATv2ConvThr(ConvThr, GATv2ConvRaw):
             out = out + self.bias
 
         # Edge removal for next layer
-        if self.training or self.counting:
+        if self.scheme_a in ['pruneall', 'pruneinc', 'keep']:
             self.logger_a.numel_before = edge_index.shape[1]
             self.logger_a.numel_after = self.idx_keep.shape[0]
             # if verbose:
@@ -344,6 +362,8 @@ class GATv2ConvThr(ConvThr, GATv2ConvRaw):
             # if edge_attr is not None:
             #     edge_attr = edge_attr[self.idx_keep]
 
+        with torch.cuda.device(edge_index.device):
+            torch.cuda.empty_cache()
         return out, edge_index
 
     def message(self, x_j: Tensor, x_i: Tensor, edge_attr: OptTensor,
@@ -370,16 +390,26 @@ class GATv2ConvThr(ConvThr, GATv2ConvRaw):
         alpha = softmax(alpha, index, ptr, size_i)
 
         # Edge pruning
-        if self.training:
+        if self.scheme_a in ['pruneall', 'pruneinc']:
+            if self.scheme_a == 'pruneinc':
+                raise NotImplementedError()
+                self.idx_keep = self.idx_keep.to(alpha.device)
+                mask_0 = torch.ones(alpha.shape[0], dtype=torch.bool, device=alpha.device)
+                mask_0[self.idx_keep] = False
+                alpha[mask_0] = 0
+            else:
+                mask_0 = torch.zeros(alpha.shape[0], dtype=torch.bool, device=alpha.device)
+
             norm_feat_msg = torch.norm(x_j, dim=[1,2])
             norm_all_msg = torch.norm(norm_feat_msg, dim=None, p=1)/x_j.shape[0]
             threshold_aj = self.threshold_a * norm_all_msg / norm_feat_msg
-            mask_0 = torch.norm(alpha, dim=1)/alpha.shape[1] < threshold_aj
+            mask_cmp = torch.norm(alpha, dim=1)/alpha.shape[1] < threshold_aj
+            mask_0 = torch.logical_or(mask_0, mask_cmp)
             mask_0[self.idx_lock] = False
             alpha[mask_0] = 0
             self.idx_keep = torch.where(~mask_0)[0]
-        elif self.counting:
-            mask_0 = torch.ones(alpha.shape[0], dtype=torch.bool)
+        elif self.scheme_a == 'keep':
+            mask_0 = torch.ones(alpha.shape[0], dtype=torch.bool, device=alpha.device)
             mask_0[self.idx_keep] = False
             mask_0[self.idx_lock] = False
             alpha[mask_0] = 0

@@ -209,13 +209,12 @@ class GCNConvThr(ConvThr, GCNConvRaw):
                 threshold_wi = self.threshold_w * norm_all_in / norm_node_in
                 ThrInPrune.apply(self.lin, 'weight', threshold_wi)
             x = self.lin(x)
-
-            self.logger_w.numel_before = self.lin.weight.numel()
-            self.logger_w.numel_after = torch.sum(self.lin.weight != 0).item()
         elif self.scheme_w == 'keep':
             x = self.lin(x)
         elif self.scheme_w == 'full':
             raise NotImplementedError()
+        self.logger_w.numel_before = self.lin.weight.numel()
+        self.logger_w.numel_after = torch.sum(self.lin.weight != 0).item()
 
         # propagate_type: (x: Tensor, edge_weight: OptTensor)
         self.idx_lock = self.get_idx_lock(edge_index, node_lock)
@@ -235,6 +234,9 @@ class GCNConvThr(ConvThr, GCNConvRaw):
         # >>>>>>>>>>
             edge_index = edge_index[:, self.idx_keep]
             edge_weight = edge_weight[self.idx_keep]
+        else:
+            self.logger_a.numel_before = edge_index.shape[1]
+            self.logger_a.numel_after = edge_index.shape[1]
 
         with torch.cuda.device(edge_index.device):
             torch.cuda.empty_cache()
@@ -270,7 +272,9 @@ class GATv2ConvRaw(pyg_nn.GATv2Conv):
     def forward(self, x: Tensor, edge_index: Adj,
                 edge_weight: OptTensor = None, **kwargs):
         self.logger_a.numel_after = edge_index.shape[1]
-        self.logger_w.numel_after = self.lin_l.weight.numel() + self.lin_r.weight.numel()
+        self.logger_w.numel_after = self.lin_l.weight.numel()
+        if not self.share_weights:
+            self.logger_w.numel_after += self.lin_r.weight.numel()
         return super().forward(x, edge_index, edge_weight)
 
     @classmethod
@@ -285,9 +289,8 @@ class GATv2ConvRaw(pyg_nn.GATv2Conv):
             flops_lin *= 2
         module.__flops__ += flops_lin
         # Message
-        flops_attn  = f_c * m                # relu
-        flops_attn += f_c * f_c * m          # alpha
-        flops_attn += 2 * m                  # softmax & attention
+        flops_attn  = 2 * f_c * m               # relu & alpha
+        flops_attn += 2 * m                     # softmax & attention
         flops_attn *= f_h
         module.__flops__ += flops_attn
         # Bias and concat
@@ -328,21 +331,27 @@ class GATv2ConvThr(ConvThr, GATv2ConvRaw):
             if norm_all_in > 1e-8:
                 threshold_wi = self.threshold_w * norm_all_in / norm_node_in
                 ThrInPrune.apply(self.lin_l, 'weight', threshold_wi)
-                ThrInPrune.apply(self.lin_r, 'weight', threshold_wi)
+                if not self.share_weights:
+                    ThrInPrune.apply(self.lin_r, 'weight', threshold_wi)
             x_l = self.lin_l(x).view(-1, H, C)
             x_r = x_l if self.share_weights else self.lin_r(x).view(-1, H, C)
-
-            self.logger_w.numel_before = self.lin_l.weight.numel() + self.lin_r.weight.numel()
-            self.logger_w.numel_after = torch.sum(self.lin_l.weight != 0).item() + torch.sum(self.lin_r.weight != 0).item()
         elif self.scheme_w == 'keep':
             x_l = self.lin_l(x).view(-1, H, C)
             x_r = x_l if self.share_weights else self.lin_r(x).view(-1, H, C)
         elif self.scheme_w == 'full':
             raise NotImplementedError()
+        self.logger_w.numel_before  = self.lin_l.weight.numel()
+        self.logger_w.numel_after  = torch.sum(self.lin_l.weight != 0).item()
+        if not self.share_weights:
+            self.logger_w.numel_before += self.lin_r.weight.numel()
+            self.logger_w.numel_after += torch.sum(self.lin_r.weight != 0).item()
 
         # propagate_type: (x: PairTensor, edge_attr: OptTensor)
         self.idx_lock = self.get_idx_lock(edge_index, node_lock)
-        out = self.propagate(edge_index, x=(x_l, x_r), edge_attr=edge_attr, size=None)
+        # edge_updater_type: (x: PairTensor, edge_attr: OptTensor)
+        alpha = self.edge_updater(edge_index, x=(x_l, x_r), edge_attr=edge_attr)
+        # propagate_type: (x: PairTensor, alpha: Tensor)
+        out = self.propagate(edge_index, x=(x_l, x_r), alpha=alpha, edge_attr=edge_attr, size=None)
 
         if self.concat:
             out = out.view(-1, self.heads * self.out_channels)
@@ -359,16 +368,19 @@ class GATv2ConvThr(ConvThr, GATv2ConvRaw):
             #     print(f"  A: {self.logger_a}, W: {self.logger_w}")
 
             edge_index = edge_index[:, self.idx_keep]
-            # if edge_attr is not None:
-            #     edge_attr = edge_attr[self.idx_keep]
+            if edge_attr is not None:
+                edge_attr = edge_attr[self.idx_keep]
+        else:
+            self.logger_a.numel_before = edge_index.shape[1]
+            self.logger_a.numel_after = edge_index.shape[1]
 
         with torch.cuda.device(edge_index.device):
             torch.cuda.empty_cache()
         return out, edge_index
 
-    def message(self, x_j: Tensor, x_i: Tensor, edge_attr: OptTensor,
-                index: Tensor, ptr: OptTensor,
-                size_i: Optional[int]) -> Tensor:
+    def edge_update(self, x_j: Tensor, x_i: Tensor, edge_attr: OptTensor,
+                    index: Tensor, ptr: OptTensor,
+                    size_i: Optional[int]) -> Tensor:
         """Args:
             x_j, x_i (Tensor [m, H, C])
             self.att (Tensor [1, H, C])
@@ -416,6 +428,9 @@ class GATv2ConvThr(ConvThr, GATv2ConvRaw):
 
         # self._alpha = alpha
         alpha = F.dropout(alpha, p=self.dropout, training=self.training)
+        return alpha
+
+    def message(self, x_j: Tensor, alpha: Tensor) -> Tensor:
         return x_j * alpha.unsqueeze(-1)
 
     @classmethod
@@ -432,8 +447,7 @@ class GATv2ConvThr(ConvThr, GATv2ConvRaw):
         flops_lin = int(flops_lin * module.logger_w.ratio)
         module.__flops__ += flops_lin
         # Message
-        flops_attn  = f_c * (m - n)          # relu
-        flops_attn += f_c * f_c * (m - n)    # alpha
+        flops_attn  = 2 * f_c * (m - n)          # relu & alpha
         flops_attn += 2 * (m - n)            # softmax & attention
         flops_attn *= f_h
         module.__flops__ += flops_attn

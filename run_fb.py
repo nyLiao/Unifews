@@ -96,6 +96,7 @@ def train(x, edge_idx, y, idx_split, epoch, verbose=False):
 
 def eval(x, edge_idx, y, idx_split, verbose=False):
     model.eval()
+    # model.set_scheme('keep', 'keep')
     model.set_scheme('full', 'keep')
     x, y = x.cuda(args.dev), y.cuda(args.dev)
     if isinstance(edge_idx, tuple):
@@ -173,7 +174,7 @@ for epoch in range(1, args.epochs+1):
         pass
     #     break     # Enable to early stop
     else:
-        epoch_conv = epoch - model_logger.patience
+        epoch_conv = max(0, epoch - model_logger.patience)
 
 # ========== Test
 # print('-' * 20, flush=True)
@@ -189,8 +190,8 @@ acc_test, time_test, outl, labl = eval(x=feat['test'], edge_idx=adj['test'],
                                        y=labels['test'], idx_split=idx['test'])
 # mem_ram, mem_cuda = metric.get_ram(), metric.get_cuda_mem(args.dev)
 # num_param, mem_param = metric.get_num_params(model), metric.get_mem_params(model)
-numel_a, numel_w = model.get_numel()
 macs_test = cal_flops(x=feat['test'], edge_idx=adj['test'], idx_split=idx['test'])
+numel_a, numel_w = model.get_numel()
 
 # ========== Log
 if logger.lvl_config > 0:

@@ -50,7 +50,7 @@ class GNNThr(nn.Module):
                  thr_a=0.0, thr_w=0.0, dropout: float = 0.0, layer: str = 'gcn',
                  **kwargs,):
         super(GNNThr, self).__init__()
-        self.apply_thr = (layer.endswith('_thr'))
+        self.apply_thr = ('_' in layer)
         self.dropout = nn.Dropout(p=dropout)
         self.act = nn.ReLU()
         self.use_bn = True
@@ -59,11 +59,15 @@ class GNNThr(nn.Module):
         # Select conv layer
         Conv = layer_dict[layer]
         # Set layer args
-        for k, v in kwargs_default[layer.replace('_thr', '')].items():
+        for k, v in kwargs_default[layer.split('_')[0]].items():
             self.kwargs.setdefault(k, v)
         norm_kwargs = {'affine': True, 'track_running_stats': True, 'momentum': 0.9}
-        thr_a = [thr_a] * nlayer if isinstance(thr_a, float) else thr_a
-        thr_w = [thr_w] * nlayer if isinstance(thr_w, float) else thr_w
+        if not isinstance(thr_a, list):
+            if layer.endswith('_rnd'):
+                thr_a = [float(thr_a)] + [0.0] * (nlayer - 1)
+            else:
+                thr_a = [float(thr_a)] * nlayer
+        thr_w = thr_w if isinstance(thr_w, list) else [float(thr_w)] * nlayer
 
         self.convs = nn.ModuleList()
         self.norms = nn.ModuleList()

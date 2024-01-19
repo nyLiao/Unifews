@@ -116,6 +116,66 @@ class GCNConvRaw(pyg_nn.GCNConv):
         module.__flops__ += f_in * m
 
 
+class GCNConvRnd(ConvThr, GCNConvRaw):
+    def __init__(self, *args, thr_a, thr_w, **kwargs):
+        super(GCNConvRnd, self).__init__(*args, thr_a=thr_a, thr_w=thr_w, **kwargs)
+        self.prune_lst = [self.lin]
+        self.idx_keep = None
+
+    def forward(self, x: Tensor, edge_tuple: Tuple,
+                node_lock: OptTensor = None, verbose: bool = False):
+        (edge_index, edge_weight) = edge_tuple
+
+        if self.scheme_w in ['pruneall', 'pruneinc']:
+            if self.scheme_w == 'pruneall':
+                if prune.is_pruned(self.lin):
+                    prune.remove(self.lin, 'weight')
+            amount = int(self.lin.weight.numel() * (1-self.threshold_w))
+            amount -= torch.sum(self.lin.weight == 0).item()
+            amount = max(amount, 0)
+            prune.RandomUnstructured.apply(self.lin, 'weight', amount)
+            x = self.lin(x)
+        elif self.scheme_w == 'keep':
+            x = self.lin(x)
+        elif self.scheme_w == 'full':
+            raise NotImplementedError()
+        self.logger_w.numel_before = self.lin.weight.numel()
+        self.logger_w.numel_after = torch.sum(self.lin.weight != 0).item()
+
+        if self.scheme_a in ['pruneall', 'pruneinc', 'keep']:
+            if self.idx_keep is None:
+                amount = int(edge_index.shape[1] * (1-self.threshold_a))
+                self.idx_keep = torch.randperm(edge_index.shape[1])[:amount]
+            self.logger_a.numel_before = edge_index.shape[1]
+            self.logger_a.numel_after = self.idx_keep.shape[0]
+            # if verbose:
+            #     print(f"  A: {self.logger_a}, W: {self.logger_w}")
+
+            edge_index = edge_index[:, self.idx_keep]
+            edge_weight = edge_weight[self.idx_keep]
+        else:
+            self.logger_a.numel_before = edge_index.shape[1]
+            self.logger_a.numel_after = edge_index.shape[1]
+
+        out = self.propagate(edge_index, x=x, edge_weight=edge_weight, size=None)
+        if self.bias is not None:
+            out = out + self.bias
+        return out, (edge_index, edge_weight)
+
+    @classmethod
+    def cnt_flops(cls, module, input, output):
+        x_in, _ = input
+        x_out, (edge_index, edge_weight) = output
+        f_in, f_out = x_in.shape[-1], x_out.shape[-1]
+        n, m = x_in.shape[0], edge_index.shape[1]
+
+        # Linear
+        flops_bias = f_out if module.lin.bias is not None else 0
+        module.__flops__ += int((f_in * f_out * module.logger_w.ratio + flops_bias) * n)
+        # Message
+        module.__flops__ += f_in * m
+
+
 class GCNConvThr(ConvThr, GCNConvRaw):
     def __init__(self, *args, thr_a, thr_w, **kwargs):
         super(GCNConvThr, self).__init__(*args, thr_a=thr_a, thr_w=thr_w, **kwargs)
@@ -302,6 +362,119 @@ class GATv2ConvRaw(pyg_nn.GATv2Conv):
             module.__flops__ += n
 
 
+class GATv2ConvRnd(ConvThr, GATv2ConvRaw):
+    def __init__(self, *args, thr_a, thr_w, **kwargs):
+        super(GATv2ConvRnd, self).__init__(*args, thr_a=thr_a, thr_w=thr_w, **kwargs)
+        self.prune_lst = [self.lin_l, self.lin_r]
+        self.idx_keep = None
+
+    def forward(self, x: Tensor, edge_index: Adj,
+                edge_attr: OptTensor = None,
+                node_lock: OptTensor = None, verbose: bool = False):
+        """Shape:
+            x: [n, F_in]
+            self.lin_l.weight: [F_out, F_in]
+            x_l: [n, H, F_out//H]
+        """
+        H, C = self.heads, self.out_channels
+        x_l: OptTensor = None
+        x_r: OptTensor = None
+        assert x.dim() == 2
+
+        # Weight pruning
+        if self.scheme_w in ['pruneall', 'pruneinc']:
+            if self.scheme_w == 'pruneall':
+                if prune.is_pruned(self.lin_l):
+                    prune.remove(self.lin_l, 'weight')
+                    prune.remove(self.lin_r, 'weight')
+            linset = (self.lin_l,) if self.share_weights else (self.lin_l, self.lin_r)
+            for lin in linset:
+                amount = int(lin.weight.numel() * (1-self.threshold_w))
+                amount -= torch.sum(lin.weight == 0).item()
+                amount = max(amount, 0)
+                prune.RandomUnstructured.apply(lin, 'weight', amount)
+            x_l = self.lin_l(x).view(-1, H, C)
+            x_r = x_l if self.share_weights else self.lin_r(x).view(-1, H, C)
+        elif self.scheme_w == 'keep':
+            x_l = self.lin_l(x).view(-1, H, C)
+            x_r = x_l if self.share_weights else self.lin_r(x).view(-1, H, C)
+        elif self.scheme_w == 'full':
+            raise NotImplementedError()
+        self.logger_w.numel_before  = self.lin_l.weight.numel()
+        self.logger_w.numel_after  = torch.sum(self.lin_l.weight != 0).item()
+        if not self.share_weights:
+            self.logger_w.numel_before += self.lin_r.weight.numel()
+            self.logger_w.numel_after += torch.sum(self.lin_r.weight != 0).item()
+
+        if self.scheme_a in ['pruneall', 'pruneinc', 'keep']:
+            if self.idx_keep is None:
+                amount = int(edge_index.shape[1] * (1-self.threshold_a))
+                self.idx_keep = torch.randperm(edge_index.shape[1])[:amount]
+            self.logger_a.numel_before = edge_index.shape[1]
+            self.logger_a.numel_after = self.idx_keep.shape[0]
+            # if verbose:
+            #     print(f"  A: {self.logger_a}, W: {self.logger_w}")
+
+            edge_index = edge_index[:, self.idx_keep]
+            if edge_attr is not None:
+                edge_attr = edge_attr[self.idx_keep]
+        else:
+            self.logger_a.numel_before = edge_index.shape[1]
+            self.logger_a.numel_after = edge_index.shape[1]
+
+        alpha = self.edge_updater(edge_index, x=(x_l, x_r), edge_attr=edge_attr)
+        out = self.propagate(edge_index, x=(x_l, x_r), alpha=alpha, edge_attr=edge_attr, size=None)
+        if self.concat:
+            out = out.view(-1, self.heads * self.out_channels)
+        else:
+            out = out.mean(dim=1)
+        if self.bias is not None:
+            out = out + self.bias
+        return out, edge_index
+
+    def edge_update(self, x_j: Tensor, x_i: Tensor, edge_attr: OptTensor,
+                    index: Tensor, ptr: OptTensor, dim_size: Optional[int]) -> Tensor:
+        x = x_i + x_j
+        if edge_attr is not None:
+            if edge_attr.dim() == 1:
+                edge_attr = edge_attr.view(-1, 1)
+            assert self.lin_edge is not None
+            edge_attr = self.lin_edge(edge_attr)
+            edge_attr = edge_attr.view(-1, self.heads, self.out_channels)
+            x = x + edge_attr
+        x = F.leaky_relu(x, self.negative_slope)
+        alpha = (x * self.att).sum(dim=-1)
+        alpha = softmax(alpha, index, ptr, dim_size)
+        alpha = F.dropout(alpha, p=self.dropout, training=self.training)
+        return alpha
+
+    @classmethod
+    def cnt_flops(cls, module, input, output):
+        x_in, _ = input
+        x_out, edge_index = output
+        f_in, f_h, f_c = x_in.shape[-1], module.heads, module.out_channels
+        n, m = x_in.shape[0], edge_index.shape[1]
+
+        # Linear
+        flops_lin = f_in * f_h * f_c * n
+        if not module.share_weights:
+            flops_lin *= 2
+        flops_lin = int(flops_lin * module.logger_w.ratio)
+        module.__flops__ += flops_lin
+        # Message
+        flops_attn  = 2 * f_c * m            # relu & alpha
+        flops_attn += 2 * m                  # softmax & attention
+        flops_attn *= f_h
+        module.__flops__ += flops_attn
+        # Bias and concat
+        if (module.bias is not None) and module.concat:
+            module.__flops__ += f_h * f_c * n
+        elif (module.bias is not None) and not module.concat:
+            module.__flops__ += (f_c + 1) * n
+        else:
+            module.__flops__ += n
+
+
 class GATv2ConvThr(ConvThr, GATv2ConvRaw):
     def __init__(self, *args, thr_a, thr_w, **kwargs):
         super(GATv2ConvThr, self).__init__(*args, thr_a=thr_a, thr_w=thr_w, **kwargs)
@@ -447,7 +620,7 @@ class GATv2ConvThr(ConvThr, GATv2ConvRaw):
         flops_lin = int(flops_lin * module.logger_w.ratio)
         module.__flops__ += flops_lin
         # Message
-        flops_attn  = 2 * f_c * (m - n)          # relu & alpha
+        flops_attn  = 2 * f_c * (m - n)      # relu & alpha
         flops_attn += 2 * (m - n)            # softmax & attention
         flops_attn *= f_h
         module.__flops__ += flops_attn
@@ -476,16 +649,20 @@ class GCNIIConvRaw(pyg_nn.GCN2Conv):
 # ==========
 layer_dict = {
     'gcn': GCNConvRaw,
+    'gcn_rnd': GCNConvRnd,
     'gcn_thr': GCNConvThr,
+    'gat': GATv2ConvRaw,
+    'gat_rnd': GATv2ConvRnd,
+    'gat_thr': GATv2ConvThr,
     'gin': GINConvRaw,
     'gcn2': GCNIIConvRaw,
-    'gat': GATv2ConvRaw,
-    'gat_thr': GATv2ConvThr,
 }
 
 flops_modules_dict = {
     GCNConvRaw: GCNConvRaw.cnt_flops,
+    GCNConvRnd: GCNConvRnd.cnt_flops,
     GCNConvThr: GCNConvThr.cnt_flops,
     GATv2ConvRaw: GATv2ConvRaw.cnt_flops,
+    GATv2ConvRnd: GATv2ConvRnd.cnt_flops,
     GATv2ConvThr: GATv2ConvThr.cnt_flops,
 }

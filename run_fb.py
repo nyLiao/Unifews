@@ -37,7 +37,7 @@ if args.dev >= 0:
     with torch.cuda.device(args.dev):
         torch.cuda.manual_seed(args.seed)
 
-if not args.algo.endswith('_thr'):
+if not ('_'  in args.algo):
     args.thr_a, args.thr_w = 0.0, 0.0
 flag_run = f"{args.seed}-{args.thr_a}-{args.thr_w}"
 logger = Logger(args.data, args.algo, flag_run=flag_run)
@@ -56,7 +56,7 @@ model.reset_parameters()
 adj['train'] = identity_n_norm(adj['train'], edge_weight=None, num_nodes=feat['train'].shape[0],
                     rnorm=model.kwargs['rnorm'], diag=model.kwargs['diag'])
 if logger.lvl_config > 1:
-    print(type(model).__name__, args.thr_a, args.thr_w)
+    print(type(model).__name__, args.algo, args.thr_a, args.thr_w)
 if logger.lvl_config > 2:
     print(model)
 model_logger.register(model, save_init=False)

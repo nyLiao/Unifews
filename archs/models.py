@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.utils.prune as prune
 
-from .layers import layer_dict
+from .layers import layer_dict, ThrInPrune, LayerNumLogger
 
 
 kwargs_default = {
@@ -134,7 +134,7 @@ class GNNThr(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, nlayer, nfeat, nhidden, nclass, dropout, thr_w=0.0):
+    def __init__(self, nlayer, nfeat, nhidden, nclass, dropout, thr_w=0.0, layer: str = 'sgc'):
         super(MLP, self).__init__()
         fbias = True
         self.fbn = True
@@ -143,6 +143,9 @@ class MLP(nn.Module):
         self.nfeat = nfeat
         self.nhidden = nhidden
         self.nclass = nclass
+        self.algo = layer
+        self.threshold_w = thr_w
+        self.scheme_w = 'full'
 
         self.fcs = nn.ModuleList()
         if self.fbn: self.bns = nn.ModuleList()
@@ -156,6 +159,7 @@ class MLP(nn.Module):
                 self.fcs.append(nn.Linear(nhidden, nhidden, bias=fbias))
                 if self.fbn: self.bns.append(nn.BatchNorm1d(nhidden))
             self.fcs.append(nn.Linear(nhidden, nclass, bias=fbias))
+        self.logger_w = [LayerNumLogger() for _ in self.fcs]
 
     def reset_parameters(self):
         for lin in self.fcs:
@@ -164,11 +168,44 @@ class MLP(nn.Module):
             for bn in self.bns:
                 bn.reset_parameters()
 
+    def apply_prune(self, lin, x, logger_w):
+        if '_' in self.algo:
+            if self.scheme_w in ['pruneall', 'pruneinc']:
+                if self.scheme_w == 'pruneall':
+                    if prune.is_pruned(lin):
+                        prune.remove(lin, 'weight')
+                if self.algo.endswith('_thr'):
+                    norm_node_in = torch.norm(x, dim=0)
+                    norm_all_in = torch.norm(norm_node_in, dim=None)/x.shape[1]
+                    if norm_all_in > 1e-8:
+                        threshold_wi = self.threshold_w * norm_all_in / norm_node_in
+                        ThrInPrune.apply(lin, 'weight', threshold_wi)
+                else:
+                    raise NotImplementedError()
+            elif self.scheme_w == 'keep':
+                pass
+            elif self.scheme_w == 'full':
+                raise NotImplementedError()
+            logger_w.numel_before = lin.weight.numel()
+            logger_w.numel_after = torch.sum(lin.weight != 0).item()
+        else:
+            logger_w.numel_after = lin.weight.numel()
+
     def forward(self, x):
         for i, fc in enumerate(self.fcs[:-1]):
+            self.apply_prune(fc, x, self.logger_w[i])
             x = fc(x)
             x = self.act(x)
             if self.fbn: x = self.bns[i](x)
             x = self.dropout(x)
-        x = self.fcs[-1](x)
+        fc = self.fcs[-1]
+        self.apply_prune(fc, x, self.logger_w[-1])
+        x = fc(x)
         return x
+
+    def set_scheme(self, scheme_w):
+        self.scheme_w = scheme_w
+
+    def get_numel(self):
+        numel_w = sum([logger.numel_after for logger in self.logger_w])
+        return numel_w/1e3

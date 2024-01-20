@@ -24,8 +24,7 @@ torch.set_printoptions(linewidth=160, edgeitems=5)
 parser = argparse.ArgumentParser()
 parser.add_argument('-f', '--seed', type=int, default=11, help='Random seed.')
 parser.add_argument('-v', '--dev', type=int, default=1, help='Device id.')
-# parser.add_argument('-c', '--config', type=str, default='cora', help='Config file name.')
-parser.add_argument('-c', '--config', type=str, default='./config/pubmed_mb.json', help='Config file name.')
+parser.add_argument('-c', '--config', type=str, default='./config/cora_mb.json', help='Config file name.')
 parser.add_argument('-m', '--algo', type=str, default=None, help='Model name')
 parser.add_argument('-n', '--suffix', type=str, default='', help='Save name suffix.')
 parser.add_argument('-a', '--thr_a', type=float, default=None, help='Threshold of adj.')
@@ -41,7 +40,7 @@ if args.dev >= 0:
         torch.cuda.manual_seed(args.seed)
 
 if not ('_'  in args.algo):
-    args.thr_a, args.thr_w = 0.0, 0.0
+    args.thr_a, args.thr_w = 1e-8, 0.0
 args.chn['delta'] = args.thr_a
 flag_run = f"{args.seed}-{args.thr_a}-{args.thr_w}"
 logger = Logger(args.data, args.algo, flag_run=flag_run)
@@ -51,12 +50,12 @@ model_logger = ModelLogger(logger, patience=args.patience, cmp='max',
 stopwatch = metric.Stopwatch()
 
 # ========== Load
-feat, labels, idx, nfeat, nclass, time_pre = load_embedding(datastr=args.data,
+feat, labels, idx, nfeat, nclass, numel_a = load_embedding(datastr=args.data,
                 datapath=args.path, algo=args.algo, algo_chn=args.chn,
                 inductive=args.inductive, multil=args.multil, seed=args.seed)
 
 model = models.MLP(nlayer=args.layer, nfeat=nfeat, nhidden=args.hidden, nclass=nclass,
-                   thr_w=args.thr_w, dropout=args.dropout)
+                   thr_w=args.thr_w, dropout=args.dropout, layer=args.algo,)
 model.reset_parameters()
 if logger.lvl_config > 1:
     print(type(model).__name__, args.algo, args.thr_a, args.thr_w)
@@ -84,11 +83,10 @@ loader_test = Data.DataLoader(dataset=ds_test, batch_size=args.batch,
 
 def train(epoch, ld=loader_train, verbose=False):
     model.train()
-    # if epoch < args.epochs//2:
-    #     model.set_scheme('pruneall')
-    # else:
-    #     # model.set_scheme('pruneinc', 'pruneinc')
-    #     model.set_scheme('pruneinc')
+    if epoch < args.epochs//2:
+        model.set_scheme('pruneall')
+    else:
+        model.set_scheme('pruneinc')
     loss_list = []
     for _, (x, y) in enumerate(ld):
         x, y = x.cuda(args.dev), y.cuda(args.dev)
@@ -108,7 +106,7 @@ def train(epoch, ld=loader_train, verbose=False):
 
 def eval(ld, verbose=False):
     model.eval()
-    # model.set_scheme('keep')
+    model.set_scheme('keep')
     output_l, labels_l = None, None
     calc = metric.F1Calculator(nclass)
     stopwatch.reset()
@@ -128,10 +126,10 @@ def eval(ld, verbose=False):
                 output = output.argmax(dim=1)
             calc.update(y, output)
 
-            output = output.cpu().detach().numpy()
-            y = y.cpu().detach().numpy()
-            output_l = output if output_l is None else np.concatenate((output_l, output), axis=0)
-            labels_l = y if labels_l is None else np.concatenate((labels_l, y), axis=0)
+            # output = output.cpu().detach().numpy()
+            # y = y.cpu().detach().numpy()
+            # output_l = output if output_l is None else np.concatenate((output_l, output), axis=0)
+            # labels_l = y if labels_l is None else np.concatenate((labels_l, y), axis=0)
     if args.multil:
         res = calc.compute('micro')
     else:
@@ -141,12 +139,13 @@ def eval(ld, verbose=False):
 
 def cal_flops(ld, verbose=False):
     model.eval()
-    # model.set_scheme('keep')
+    model.set_scheme('keep')
 
     macs, nparam = ptflops.get_model_complexity_info(model, (args.batch, nfeat),
                         custom_modules_hooks=flops_modules_dict,
                         as_strings=False, print_per_layer_stat=verbose, verbose=verbose)
-    return macs/1e9
+    macs /= args.batch
+    return macs/1e9, nparam/1e3
 
 
 # ========== Train
@@ -163,8 +162,8 @@ for epoch in range(1, args.epochs+1):
     time_tol.update(time_epoch)
     acc_val, _, _, _ = eval(ld=loader_val)
     scheduler.step(acc_val)
-    macs_epoch = cal_flops(ld=loader_val)
-    macs_tol.update(macs_epoch)
+    # macs_epoch = cal_flops(ld=loader_val)
+    # macs_tol.update(macs_epoch)
 
     if verbose:
         res = f"Epoch:{epoch:04d} | train loss:{loss_train:.4f}, val acc:{acc_val:.4f}, time:{time_tol.val:.4f}, macs:{macs_tol.val:.4f}"
@@ -175,7 +174,7 @@ for epoch in range(1, args.epochs+1):
     acc_best = model_logger.save_best(acc_val, epoch=epoch)
     if model_logger.is_early_stop(epoch=epoch):
         pass
-    #     break     # Enable to early stop
+    #     break     # >> Enable to early stop
     else:
         epoch_conv = max(0, epoch - model_logger.patience)
 
@@ -190,8 +189,10 @@ with torch.cuda.device(args.dev):
 acc_test, time_test, outl, labl = eval(ld=loader_test)
 # mem_ram, mem_cuda = metric.get_ram(), metric.get_cuda_mem(args.dev)
 # num_param, mem_param = metric.get_num_params(model), metric.get_mem_params(model)
-macs_test = cal_flops(ld=loader_val, verbose=True)
-numel_a, numel_w = model.get_numel()
+macs_test, _ = cal_flops(ld=loader_val)
+macs_tol.update(macs_test*epoch*len(idx['train']), epoch)
+macs_test *= len(idx['test'])
+numel_w = model.get_numel()
 
 # ========== Log
 if logger.lvl_config > 0:

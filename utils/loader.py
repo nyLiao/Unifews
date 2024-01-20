@@ -94,10 +94,10 @@ def load_embedding(datastr: str, algo: str, algo_chn: DotMap,
                    seed: int=0, **kwargs):
     # Inductive or transductive data processor
     dp = DataProcess(datastr, path=datapath, seed=seed)
-    dp.input(['adjnpz', 'labels', 'attr_matrix'])
+    dp.input(['labels', 'attr_matrix', 'deg'])
     if inductive:
         dpi = DataProcess_inductive(datastr, path=datapath, seed=seed)
-        dpi.input(['adjnpz', 'attr_matrix'])
+        dpi.input(['attr_matrix', 'deg'])
     else:
         dpi = dp
     # Get index
@@ -129,26 +129,24 @@ def load_embedding(datastr: str, algo: str, algo_chn: DotMap,
     # Get node attributes
     py_a2prop = A2Prop()
     py_a2prop.load(os.path.join(datapath, datastr), m, n, seed)
-    chn = dmap2dct(algo, DotMap(algo_chn), dp)
+    chn = dmap2dct(algo.split('_')[0], DotMap(algo_chn), dp)
 
     feat = dp.attr_matrix.transpose().astype(np.float32, order='C')
+
     # deg_b = np.power(np.maximum(dp.deg, 1e-12), chn['rrb'])
     # idx_zero = np.where(deg_b == 0)[0]
     # assert idx_zero.size == 0, f"Isolated nodes found: {idx_zero}"
     # deg_b[idx_zero] = 1
     # feat /= deg_b
-
-    time_pre = 0
-    time_pre += py_a2prop.compute(1, [chn], feat)
-
-    # deg_b = np.power(np.maximum(processor.deg, 1e-12), chn['rrb'])
+    numel_a = py_a2prop.compute(1, [chn], feat)
     # feat *= deg_b
+
     feat = feat.transpose()
-    # feat = matstd_clip(feat, idx['train'], with_mean=True)
+    feat = matstd_clip(feat, idx['train'], with_mean=True)
     feats = {'val':  torch.FloatTensor(feat[idx['val']]),
              'test': torch.FloatTensor(feat[idx['test']])}
     feats['train'] = torch.FloatTensor(feat[idx['train']])
     del feat
     gc.collect()
-    print(feats['train'].shape)
-    return feats, labels, idx, nfeat, nclass, time_pre
+    # print(feats['train'].shape)
+    return feats, labels, idx, nfeat, nclass, numel_a/1e3

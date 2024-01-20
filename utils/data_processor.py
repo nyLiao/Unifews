@@ -57,7 +57,7 @@ def matstd_clip(m, idx, with_mean=False, clip=False):
     scaler.fit(m[idx])
     if clip:
         mean, std = scaler.mean_, scaler.scale_
-        k = 3
+        k = 9
         m = np.clip(m, a_min=mean-k*std, a_max=mean+k*std)
     m = scaler.transform(m)
     return m

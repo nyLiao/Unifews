@@ -131,3 +131,44 @@ class GNNThr(nn.Module):
     @classmethod
     def batch_counter_hook(cls, module, input, output):
         module.__batch_counter__ += 1
+
+
+class MLP(nn.Module):
+    def __init__(self, nlayer, nfeat, nhidden, nclass, dropout, thr_w=0.0):
+        super(MLP, self).__init__()
+        fbias = True
+        self.fbn = True
+        self.dropout = nn.Dropout(p=dropout)
+        self.act = nn.ReLU(inplace=True)
+        self.nfeat = nfeat
+        self.nhidden = nhidden
+        self.nclass = nclass
+
+        self.fcs = nn.ModuleList()
+        if self.fbn: self.bns = nn.ModuleList()
+
+        if nlayer == 1:
+            self.fcs.append(nn.Linear(nfeat, nclass, bias=fbias))
+        else:
+            self.fcs.append(nn.Linear(nfeat, nhidden, bias=fbias))
+            if self.fbn: self.bns.append(nn.BatchNorm1d(nhidden))
+            for _ in range(nlayer - 2):
+                self.fcs.append(nn.Linear(nhidden, nhidden, bias=fbias))
+                if self.fbn: self.bns.append(nn.BatchNorm1d(nhidden))
+            self.fcs.append(nn.Linear(nhidden, nclass, bias=fbias))
+
+    def reset_parameters(self):
+        for lin in self.fcs:
+            lin.reset_parameters()
+        if self.fbn:
+            for bn in self.bns:
+                bn.reset_parameters()
+
+    def forward(self, x):
+        for i, fc in enumerate(self.fcs[:-1]):
+            x = fc(x)
+            x = self.act(x)
+            if self.fbn: x = self.bns[i](x)
+            x = self.dropout(x)
+        x = self.fcs[-1](x)
+        return x

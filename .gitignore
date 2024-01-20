@@ -8,6 +8,7 @@ result*/
 save
 save/*
 wheels/*
+precompute/prop.cpp
 
 # my ignore
 try*
@@ -62,7 +63,7 @@ _deps
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
-*.py[cod]
+*.py[co]
 *$py.class
 
 # C extensions

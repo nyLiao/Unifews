@@ -48,6 +48,21 @@ def matnorm_inf_dual(m, axis=0):
     return (pos + neg)
 
 
+def matstd_clip(m, idx, with_mean=False, clip=False):
+    """Standardize and clip per feature"""
+    # idx = np.setdiff1d(idx, [0])
+    if (len(idx) > 0.75 * m.shape[0]) and (m.shape[0] > 2e9):
+        idx = np.random.choice(idx, size=int(len(idx)/5), replace=False)
+    scaler = StandardScaler(with_mean=with_mean)
+    scaler.fit(m[idx])
+    if clip:
+        mean, std = scaler.mean_, scaler.scale_
+        k = 3
+        m = np.clip(m, a_min=mean-k*std, a_max=mean+k*std)
+    m = scaler.transform(m)
+    return m
+
+
 def edgeidx2adj(row, col, n, undirected=False):
     if undirected:
         row, col = np.concatenate([row, col], axis=0), np.concatenate([col, row], axis=0)

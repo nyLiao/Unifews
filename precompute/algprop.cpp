@@ -89,13 +89,13 @@ float A2prop::compute(uint nchnn, Channel* chnss, Eigen::Map<Eigen::MatrixXf> &f
     // Node-specific array
     chns = chnss;
     assert(nchnn <= 4);
-    dega = Eigen::ArrayX4f::Zero(n, nchnn);
-    degb = Eigen::ArrayX4f::Zero(n, nchnn);
-    dinva = Eigen::ArrayX4f::Zero(n, nchnn);
+    dega = Eigen::ArrayXf::Zero(n);
+    dinva = Eigen::ArrayXf::Zero(n);
+    dinvb = Eigen::ArrayXf::Zero(n);
     for (uint c = 0; c < nchnn; c++) {
-        dega.col(c) = deg.pow(chns[c].rra);
-        degb.col(c) = deg.pow(chns[c].rrb);
-        dinva.col(c) = 1 / dega.col(c);
+        dega = deg.pow(chns[c].rra);
+        dinva = 1 / dega;
+        dinvb = 1 / deg.pow(chns[c].rrb);
     }
 
     // Feat is ColMajor, shape: (n, c*F)
@@ -103,7 +103,7 @@ float A2prop::compute(uint nchnn, Channel* chnss, Eigen::Map<Eigen::MatrixXf> &f
     int it = 0;
     map_feat = Eigen::ArrayXf::LinSpaced(fsum, 0, fsum - 1);
     // random_shuffle(map_feat.data(), map_feat.data() + map_feat.size());
-    cout << "feat dim: " << feat.cols() << ", nodes: " << feat.rows() << endl;
+    cout << "feat dim: " << feat.cols() << ", nodes: " << feat.rows() << ". ";
 
     // Feature-specific array
     dlt_p = Eigen::ArrayXf::Zero(fsum);
@@ -111,14 +111,15 @@ float A2prop::compute(uint nchnn, Channel* chnss, Eigen::Map<Eigen::MatrixXf> &f
     maxf_p = Eigen::ArrayXf::Zero(fsum);
     maxf_n = Eigen::ArrayXf::Zero(fsum);
     map_chn = Eigen::ArrayXi::Zero(fsum);
+    macs = Eigen::ArrayXf::Zero(fsum);
     // Loop each feature index `it`, inside channel index `i`
     for (uint c = 0; c < nchnn; c++) {
         for (int i = 0; i < chns[c].dim; i++) {
             for (uint u = 0; u < n; u++) {
                 if (feat(u, i) > 0)
-                    dlt_p(it) += feat(u, it) * degb(u);
+                    dlt_p(it) += feat(u, it) * pow(deg(u), chns[c].rrb);
                 else
-                    dlt_n(it) += feat(u, it) * degb(u);
+                    dlt_n(it) += feat(u, it) * pow(deg(u), chns[c].rrb);
                 update_maxr(feat(u, it), maxf_p(it), maxf_n(it));
             }
             if (dlt_p(it) == 0)
@@ -133,6 +134,7 @@ float A2prop::compute(uint nchnn, Channel* chnss, Eigen::Map<Eigen::MatrixXf> &f
     }
 
     // Begin propagation
+    cout << "Propagating..." << endl;
     struct timeval ttod_start, ttod_end;
     double ttod, tclk;
     gettimeofday(&ttod_start, NULL);
@@ -158,11 +160,12 @@ float A2prop::compute(uint nchnn, Channel* chnss, Eigen::Map<Eigen::MatrixXf> &f
     tclk = get_curr_time() - tclk;
     gettimeofday(&ttod_end, NULL);
     ttod = ttod_end.tv_sec - ttod_start.tv_sec + (ttod_end.tv_usec - ttod_start.tv_usec) / 1000000.0;
-    cout << "Prop  time: " << ttod << " \ts, \t";
-    cout << "Clock time: " << tclk << " \ts" << endl;
-    cout << "Max   PRAM: " << get_proc_memory() << " \tGB, \t";
-    cout << "End    RAM: " << get_stat_memory() << " \tGB" << endl;
-    return ttod;
+    cout << "[Pre] Prop  time: " << ttod << " s, ";
+    cout << "Clock time: " << tclk << " s, ";
+    cout << "Max   PRAM: " << get_proc_memory() << " GB, ";
+    cout << "End    RAM: " << get_stat_memory() << " GB, ";
+    cout << "MACs: " << macs.sum()/1e9 << " G" << endl;
+    return macs.sum();
 }
 
 // ====================
@@ -175,13 +178,10 @@ void A2prop::feat_chn(Eigen::Ref<Eigen::MatrixXf> feats, int st, int ed) {
     // Loop each feature `ift`, index `it`
     for (int it = st; it < ed; it++) {
         const uint ift = map_feat(it);
-        const uint ic = map_chn(ift);
-        const Channel chn = chns[ic];
+        const Channel chn = chns[0];
         const float alpha = chn.alpha;
         vector<uint> plshort(pl);
         Eigen::Map<Eigen::VectorXf> feati(feats.col(ift).data(), n);
-        Eigen::Map<Eigen::ArrayXf> degac(dega.col(ic).data(), n);
-        Eigen::Map<Eigen::ArrayXf> dinvac(dinva.col(ic).data(), n);
 
         const float dlti_p = dlt_p(ift);
         const float dlti_n = dlt_n(ift);
@@ -189,6 +189,7 @@ void A2prop::feat_chn(Eigen::Ref<Eigen::MatrixXf> feats, int st, int ed) {
         const float dltinv_n = 1 / dlti_n;
         float maxr_p = maxf_p(ift);     // max positive residue
         float maxr_n = maxf_n(ift);     // max negative residue
+        float maccnt = 0;
 
         // Init residue
         res1.setZero();
@@ -214,50 +215,62 @@ void A2prop::feat_chn(Eigen::Ref<Eigen::MatrixXf> feats, int st, int ed) {
                 // if (chn.is_idt)
                 //     rcurr(u) += old;
                 if (thr_p > 1 || thr_n > 1) {
-                    if (chn.type == 1)
+                    float oldb = 0;
+                    if (chn.is_acc) {
                         feati(u) += old * alpha;
+                        oldb = old * (1-alpha) * dinvb(u);
+                    }
 
                     // Loop each neighbor index `im`, node `v`
                     uint iv;
-                    for (iv = pl[u]; iv < pl[u+1]; iv++) {
+                    const uint ivmax = (chn.is_thr) ? plshort[u+1] : pl[u+1];
+                    for (iv = pl[u]; iv < ivmax; iv++) {
                         const uint v = el[iv];
-                        const float da_v = degac(v);
+                        const float da_v = dega(v);
                         if (thr_p > da_v || thr_n > da_v) {
-                            if (chn.type == 0)
-                                rcurr(v) += old / deg(v);
+                            maccnt++;
+                            if (chn.is_acc)
+                                rcurr(v) += oldb * dinva(v);
                             else
-                                rcurr(v) += old * (1-alpha) * dinvac(v) / degb(u);
+                                rcurr(v) += old / deg(v);
                             update_maxr(rcurr(v), maxr_p, maxr_n);
                         } else {
                             const float ran = rand_r(&seedt) % RAND_MAX / (float)RAND_MAX;
-                            plshort[u+1] = iv;
+                            // plshort[u+1] = iv;
                             thr_p /= ran;
                             thr_n /= ran;
                             break;
                         }
                     }
 
+                    // for (; iv < ivmax; iv++) {
+                    // <<<<<
                     for (; iv < pl[u+1]; iv++) {
                         const uint v = el[iv];
-                        const float da_v = degac(v);
-                        const float dinva_v = dinvac(v);
+                        const float da_v = dega(v);
+                        const float dinva_v = dinva(v);
                         if (thr_p > da_v) {
+                            maccnt++;
                             rcurr(v) += dlti_p * dinva_v;
                             update_maxr(rcurr(v), maxr_p, maxr_n);
                         } else if (thr_n > da_v) {
+                            maccnt++;
                             rcurr(v) += dlti_n * dinva_v;
                             update_maxr(rcurr(v), maxr_p, maxr_n);
-                        } else
+                        } else {
+                            plshort[u+1] = iv;
                             break;
+                        }
                     }
                 } else {
-                    if (chn.type == 1)
+                    if (chn.is_acc)
                         feati(u) += old;
                 }
             }
         }
 
         feati += rcurr;
+        macs(ift) += maccnt;
     }
 }
 

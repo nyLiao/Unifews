@@ -11,6 +11,9 @@ cdef extern from "algprop.cpp":
 cdef extern from "algprop.h" namespace "algprop":
     cdef struct Channel:
         int type
+        bool is_thr
+        bool is_acc
+
         int hop
         int dim
         float delta

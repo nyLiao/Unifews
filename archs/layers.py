@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch_geometric.nn as pyg_nn
@@ -647,6 +648,17 @@ class GCNIIConvRaw(pyg_nn.GCN2Conv):
 
 
 # ==========
+def Linear_cnt_flops(module, input, output):
+    input = input[0]
+    # pytorch checks dimensions, so here we don't care much
+    output_last_dim = output.shape[-1]
+    input_last_dim = input.shape[-1]
+    pre_last_dims_prod = np.prod(input.shape[0:-1], dtype=np.int64)
+    bias_flops = output_last_dim if module.bias is not None else 0
+    module.__flops__ += int((input_last_dim * output_last_dim + bias_flops)
+                            * pre_last_dims_prod * module.logger_w.ratio)
+
+
 layer_dict = {
     'gcn': GCNConvRaw,
     'gcn_rnd': GCNConvRnd,
@@ -659,6 +671,7 @@ layer_dict = {
 }
 
 flops_modules_dict = {
+    nn.Linear: Linear_cnt_flops,
     GCNConvRaw: GCNConvRaw.cnt_flops,
     GCNConvRnd: GCNConvRnd.cnt_flops,
     GCNConvThr: GCNConvThr.cnt_flops,

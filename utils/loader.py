@@ -17,14 +17,16 @@ torch.set_printoptions(linewidth=160, edgeitems=5)
 
 
 def dmap2dct(chnname: str, dmap: DotMap, processor: DataProcess):
-    typedct = {'sgc': 0, 'gbp': 1, }
+    typedct = {'sgc': 0, 'gbp': 1,
+               'sgc_thr': 2, 'gbp_thr': 3,}
+    ctype = chnname.split('_')[0]
 
     dct = {}
     dct['type'] = typedct[chnname]
     dct['hop'] = dmap.hop
     dct['dim'] = processor.nfeat
     dct['delta'] = dmap.delta if type(dmap.delta) is float else 1e-5
-    dct['alpha'] = dmap.alpha if (type(dmap.alpha) is float and not (chnname == 'sgc')) else 0
+    dct['alpha'] = dmap.alpha if (type(dmap.alpha) is float and not (ctype == 'sgc')) else 0
     dct['rra'] = (1 - dmap.rrz) if type(dmap.rrz) is float else 0
     dct['rrb'] = dmap.rrz if type(dmap.rrz) is float else 0
     return dct
@@ -129,7 +131,7 @@ def load_embedding(datastr: str, algo: str, algo_chn: DotMap,
     # Get node attributes
     py_a2prop = A2Prop()
     py_a2prop.load(os.path.join(datapath, datastr), m, n, seed)
-    chn = dmap2dct(algo.split('_')[0], DotMap(algo_chn), dp)
+    chn = dmap2dct(algo, DotMap(algo_chn), dp)
 
     feat = dp.attr_matrix.transpose().astype(np.float32, order='C')
 
@@ -138,8 +140,12 @@ def load_embedding(datastr: str, algo: str, algo_chn: DotMap,
     # assert idx_zero.size == 0, f"Isolated nodes found: {idx_zero}"
     # deg_b[idx_zero] = 1
     # feat /= deg_b
-    numel_a = py_a2prop.compute(1, [chn], feat)
+    macs_pre = py_a2prop.compute(1, [chn], feat)
     # feat *= deg_b
+    if not ('_'  in algo):
+        if seed >= 15:
+            print(macs_pre/1e9, chn['hop'] * m * nfeat/1e9)
+        macs_pre = chn['hop'] * m * nfeat
 
     feat = feat.transpose()
     feat = matstd_clip(feat, idx['train'], with_mean=True)
@@ -149,4 +155,4 @@ def load_embedding(datastr: str, algo: str, algo_chn: DotMap,
     del feat
     gc.collect()
     # print(feats['train'].shape)
-    return feats, labels, idx, nfeat, nclass, numel_a/1e3
+    return feats, labels, idx, nfeat, nclass, macs_pre/1e9

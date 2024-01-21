@@ -16,6 +16,9 @@ cdef class A2Prop:
 			float res
 		for i in range(nchn):
 			c_chns[i].type = chns[i]['type']
+			c_chns[i].is_thr = (chns[i]['type'] > 1)
+			c_chns[i].is_acc = (chns[i]['type'] % 2 == 1)
+
 			c_chns[i].hop = chns[i]['hop']
 			c_chns[i].dim = chns[i]['dim']
 			c_chns[i].delta = chns[i]['delta']

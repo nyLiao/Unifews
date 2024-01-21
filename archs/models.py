@@ -159,7 +159,8 @@ class MLP(nn.Module):
                 self.fcs.append(nn.Linear(nhidden, nhidden, bias=fbias))
                 if self.fbn: self.bns.append(nn.BatchNorm1d(nhidden))
             self.fcs.append(nn.Linear(nhidden, nclass, bias=fbias))
-        self.logger_w = [LayerNumLogger() for _ in self.fcs]
+        for fc in self.fcs:
+            fc.logger_w = LayerNumLogger(layer)
 
     def reset_parameters(self):
         for lin in self.fcs:
@@ -168,7 +169,8 @@ class MLP(nn.Module):
             for bn in self.bns:
                 bn.reset_parameters()
 
-    def apply_prune(self, lin, x, logger_w):
+    def apply_prune(self, lin, x):
+        logger_w = lin.logger_w
         if '_' in self.algo:
             if self.scheme_w in ['pruneall', 'pruneinc']:
                 if self.scheme_w == 'pruneall':
@@ -189,17 +191,18 @@ class MLP(nn.Module):
             logger_w.numel_before = lin.weight.numel()
             logger_w.numel_after = torch.sum(lin.weight != 0).item()
         else:
+            logger_w.numel_before = lin.weight.numel()
             logger_w.numel_after = lin.weight.numel()
 
     def forward(self, x):
         for i, fc in enumerate(self.fcs[:-1]):
-            self.apply_prune(fc, x, self.logger_w[i])
+            self.apply_prune(fc, x)
             x = fc(x)
             x = self.act(x)
             if self.fbn: x = self.bns[i](x)
             x = self.dropout(x)
         fc = self.fcs[-1]
-        self.apply_prune(fc, x, self.logger_w[-1])
+        self.apply_prune(fc, x)
         x = fc(x)
         return x
 
@@ -207,5 +210,5 @@ class MLP(nn.Module):
         self.scheme_w = scheme_w
 
     def get_numel(self):
-        numel_w = sum([logger.numel_after for logger in self.logger_w])
+        numel_w = sum([fc.logger_w.numel_after for fc in self.fcs])
         return numel_w/1e3

@@ -118,4 +118,4 @@ if __name__ == '__main__':
     ds.calculate(['deg', 'idx_train',])
     print(ds)
     os.makedirs(os.path.join(ds.path, ds.name), exist_ok=False)
-    ds.output(['adjtxt', 'adjnpz', 'adjl', 'attr_matrix', 'deg', 'labels', ])
+    ds.output(['adjtxt', 'adjnpz', 'adjl', 'attr_matrix', 'deg', 'labels', 'attribute'])

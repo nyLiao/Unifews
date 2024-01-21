@@ -1,4 +1,5 @@
 import os
+import gc
 import random
 import argparse
 import numpy as np
@@ -31,7 +32,7 @@ parser.add_argument('-a', '--thr_a', type=float, default=None, help='Threshold o
 parser.add_argument('-w', '--thr_w', type=float, default=None, help='Threshold of weight.')
 args = prepare_opt(parser)
 
-num_thread = 32
+num_thread = 0 if args.data in ['cora', 'citeseer', 'pubmed'] else 8
 random.seed(args.seed)
 np.random.seed(args.seed)
 torch.manual_seed(args.seed)
@@ -42,7 +43,7 @@ if args.dev >= 0:
 if not ('_'  in args.algo):
     args.thr_a, args.thr_w = 1e-8, 0.0
 args.chn['delta'] = args.thr_a
-flag_run = f"{args.seed}-{args.thr_a}-{args.thr_w}"
+flag_run = f"{args.seed}-{args.thr_a:.0e}-{args.thr_w:.0e}"
 logger = Logger(args.data, args.algo, flag_run=flag_run)
 logger.save_opt(args)
 model_logger = ModelLogger(logger, patience=args.patience, cmp='max',
@@ -50,7 +51,7 @@ model_logger = ModelLogger(logger, patience=args.patience, cmp='max',
 stopwatch = metric.Stopwatch()
 
 # ========== Load
-feat, labels, idx, nfeat, nclass, numel_a = load_embedding(datastr=args.data,
+feat, labels, idx, nfeat, nclass, macs_pre = load_embedding(datastr=args.data,
                 datapath=args.path, algo=args.algo, algo_chn=args.chn,
                 inductive=args.inductive, multil=args.multil, seed=args.seed)
 
@@ -83,14 +84,19 @@ loader_test = Data.DataLoader(dataset=ds_test, batch_size=args.batch,
 
 def train(epoch, ld=loader_train, verbose=False):
     model.train()
-    if epoch < args.epochs//2:
-        model.set_scheme('pruneall')
-    else:
-        model.set_scheme('pruneinc')
+
     loss_list = []
-    for _, (x, y) in enumerate(ld):
+    stopwatch.reset()
+    for it, (x, y) in enumerate(ld):
         x, y = x.cuda(args.dev), y.cuda(args.dev)
-        stopwatch.reset()
+
+        if it == 0:
+            if epoch < args.epochs//2:
+                model.set_scheme('pruneall')
+            else:
+                model.set_scheme('pruneinc')
+        else:
+            model.set_scheme('keep')
 
         stopwatch.start()
         optimizer.zero_grad()
@@ -101,6 +107,10 @@ def train(epoch, ld=loader_train, verbose=False):
         stopwatch.pause()
 
         loss_list.append(loss_batch.item())
+
+    with torch.cuda.device(args.dev):
+        torch.cuda.empty_cache()
+    gc.collect()
     return np.mean(loss_list), stopwatch.time
 
 
@@ -141,10 +151,9 @@ def cal_flops(ld, verbose=False):
     model.eval()
     model.set_scheme('keep')
 
-    macs, nparam = ptflops.get_model_complexity_info(model, (args.batch, nfeat),
+    macs, nparam = ptflops.get_model_complexity_info(model, (nfeat,),
                         custom_modules_hooks=flops_modules_dict,
                         as_strings=False, print_per_layer_stat=verbose, verbose=verbose)
-    macs /= args.batch
     return macs/1e9, nparam/1e3
 
 
@@ -162,8 +171,8 @@ for epoch in range(1, args.epochs+1):
     time_tol.update(time_epoch)
     acc_val, _, _, _ = eval(ld=loader_val)
     scheduler.step(acc_val)
-    # macs_epoch = cal_flops(ld=loader_val)
-    # macs_tol.update(macs_epoch)
+    macs_epoch, _ = cal_flops(ld=loader_val)
+    macs_tol.update(macs_epoch*len(idx['train']))
 
     if verbose:
         res = f"Epoch:{epoch:04d} | train loss:{loss_train:.4f}, val acc:{acc_val:.4f}, time:{time_tol.val:.4f}, macs:{macs_tol.val:.4f}"
@@ -190,8 +199,10 @@ acc_test, time_test, outl, labl = eval(ld=loader_test)
 # mem_ram, mem_cuda = metric.get_ram(), metric.get_cuda_mem(args.dev)
 # num_param, mem_param = metric.get_num_params(model), metric.get_mem_params(model)
 macs_test, _ = cal_flops(ld=loader_val)
-macs_tol.update(macs_test*epoch*len(idx['train']), epoch)
+# macs_tol.update(macs_test*epoch*len(idx['train']), epoch)
+macs_tol.update(macs_pre, 0)
 macs_test *= len(idx['test'])
+numel_a = macs_pre * 1e6 / nfeat
 numel_w = model.get_numel()
 
 # ========== Log

@@ -39,7 +39,12 @@ namespace algprop {
     const int NUMTHREAD = 32;           // Number of threads
 
     struct Channel {                    // channel scheme
-        int type;                       // 0: SGC, 1: APPNP
+        int type;
+            // 0: SGC, 1: APPNP
+            // 2: SGC_thr, 3: APPNP_thr
+        bool is_thr;                    // is threshold
+        bool is_acc;                    // is accumulate (APPNP)
+
         int hop;                        // propagation hop
         int dim;                        // feature dimension
         float delta;                    // absolute error
@@ -54,10 +59,12 @@ namespace algprop {
         vector<uint> pl;
         Eigen::ArrayXf map_feat;        // permuted index -> index in feats
         Eigen::ArrayXi map_chn;         // index in chns -> channel type
+        Eigen::ArrayXf macs;            // MACs per feature
 
         Channel* chns;                  // channel schemes
         Eigen::ArrayXf deg;             // node degree vector
-        Eigen::ArrayX4f dega, degb, dinva;    // left-norm degree, inversed deg_a
+        Eigen::ArrayXf dega, dinva;     //  left-norm degree, inversed deg_a
+        Eigen::ArrayXf dinvb;           // right-norm degree, inversed deg_b
         Eigen::ArrayXf dlt_p, dlt_n;    // absolute error (positive, negative)
         Eigen::ArrayXf maxf_p, maxf_n;  // max feature coefficient
 

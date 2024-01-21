@@ -131,8 +131,8 @@ class Logger(object):
                acc_test, conv_epoch, epoch, time_train, macs_train,
                time_test, macs_test, numel_a, numel_w):
         hstr, cstr = '', ''
-        hstr += f"      Data|     Model|  Seed|  ThA|  ThW| "
-        cstr += f"{data:10s},{algo:10s},{seed:6d},{thr_a:5.3f},{thr_w:5.3f},"
+        hstr += f"      Data|     Model|  Seed|    ThA|    ThW| "
+        cstr += f"{data:10s},{algo:10s},{seed:6d},{thr_a:7.1e},{thr_w:7.1e},"
         hstr += f"   Acc|  Cn|  EP| "
         cstr += f"{acc_test:7.5f},{conv_epoch:4d},{epoch:4d},"
         hstr += f" Ttrain|  Ctrain| "
@@ -317,7 +317,8 @@ class ModelLogger(object):
 
 
 class LayerNumLogger(object):
-    def __init__(self):
+    def __init__(self, name: str=None):
+        self.name = name
         self.numel_before = None
         self.numel_after = None
 

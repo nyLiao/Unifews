@@ -235,17 +235,17 @@ void A2prop::feat_chn(Eigen::Ref<Eigen::MatrixXf> feats, int st, int ed) {
                                 rcurr(v) += old / deg(v);
                             update_maxr(rcurr(v), maxr_p, maxr_n);
                         } else {
-                            const float ran = rand_r(&seedt) % RAND_MAX / (float)RAND_MAX;
-                            // plshort[u+1] = iv;
-                            thr_p /= ran;
-                            thr_n /= ran;
                             break;
+                            plshort[u+1] = min(pl[u+1], iv+chn.hop-il);
                         }
                     }
 
-                    // for (; iv < ivmax; iv++) {
+                    const float ran = (float)RAND_MAX / (rand_r(&seedt) % RAND_MAX);
+                    thr_p *= ran;
+                    thr_n *= ran;
+                    for (; iv < ivmax; iv++) {
                     // <<<<<
-                    for (; iv < pl[u+1]; iv++) {
+                    // for (; iv < pl[u+1]; iv++) {
                         const uint v = el[iv];
                         const float da_v = dega(v);
                         const float dinva_v = dinva(v);
@@ -258,7 +258,7 @@ void A2prop::feat_chn(Eigen::Ref<Eigen::MatrixXf> feats, int st, int ed) {
                             rcurr(v) += dlti_n * dinva_v;
                             update_maxr(rcurr(v), maxr_p, maxr_n);
                         } else {
-                            plshort[u+1] = iv;
+                            // plshort[u+1] = iv;
                             break;
                         }
                     }

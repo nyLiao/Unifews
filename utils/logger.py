@@ -75,13 +75,14 @@ class Logger(object):
         """
         return os.path.join(self.dir_save, *args)
 
-    def print(self, s, sf=None) -> None:
+    def print(self, s, sf=None, lvl=None) -> None:
         """
         Print string to console and write log file.
         """
-        if self.lvl_log > 0:
+        lvl = self.lvl_log if lvl is None else lvl
+        if lvl > 0:
             print(s, flush=True)
-        if self.lvl_log > 2:
+        if lvl > 2:
             sf = s if sf is None else sf
             with open(self.file_log, 'a') as f:
                 f.write(str(sf) + '\n')
@@ -106,11 +107,11 @@ class Logger(object):
             if os.path.isfile(self.file_log):
                 print(hs)
             else:
-                self.print(hs, hs.replace('|', ','))
-            self.print(s)
+                self.print(hs, hs.replace('|', ','), lvl=self.lvl_config)
+            self.print(s, lvl=self.lvl_config)
 
     def save_opt(self, opt: DotMap) -> None:
-        if self.lvl_config > 2:
+        if self.lvl_log > 2:
             os.makedirs(self.dir_save, exist_ok=True)
             with open(self.file_config, 'w') as f:
                 json.dump(opt.toDict(), fp=f, indent=4, sort_keys=False)

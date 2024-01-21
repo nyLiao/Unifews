@@ -41,9 +41,9 @@ if args.dev >= 0:
         torch.cuda.manual_seed(args.seed)
 
 if not ('_'  in args.algo):
-    args.thr_a, args.thr_w = 1e-8, 0.0
+    args.thr_a, args.thr_w = 1e-12, 0.0
 args.chn['delta'] = args.thr_a
-flag_run = f"{args.seed}-{args.thr_a:.0e}-{args.thr_w:.0e}"
+flag_run = f"{args.seed}-{args.thr_a:.1e}-{args.thr_w:.1e}"
 logger = Logger(args.data, args.algo, flag_run=flag_run)
 logger.save_opt(args)
 model_logger = ModelLogger(logger, patience=args.patience, cmp='max',
@@ -199,9 +199,12 @@ acc_test, time_test, outl, labl = eval(ld=loader_test)
 # mem_ram, mem_cuda = metric.get_ram(), metric.get_cuda_mem(args.dev)
 # num_param, mem_param = metric.get_num_params(model), metric.get_mem_params(model)
 macs_test, _ = cal_flops(ld=loader_val)
-# macs_tol.update(macs_test*epoch*len(idx['train']), epoch)
-macs_tol.update(macs_pre, 0)
 macs_test *= len(idx['test'])
+
+n = len(idx['train']) + len(idx['val']) + len(idx['test'])
+r_train, r_test = len(idx['train'])/n, len(idx['test'])/n
+macs_tol.update(macs_pre * r_train, 0)
+macs_test += macs_pre * r_test
 numel_a = macs_pre * 1e6 / nfeat
 numel_w = model.get_numel()
 

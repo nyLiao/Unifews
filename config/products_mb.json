@@ -1,7 +1,7 @@
 {
-    "data": "arxiv",
+    "data": "products",
     "path": "./data/",
-    "algo": "sgc_thr",
+    "algo": "sgc",
     "epochs": 200,
     "patience": 20,
     "batch": 16384,
@@ -10,7 +10,7 @@
     "layer": 2,
     "hidden": 512,
     "dropout": 0.5,
-    "thr_a": 1e-6,
+    "thr_a": 1e-7,
     "thr_w": 1e-2,
     "inductive": false,
     "multil": false,

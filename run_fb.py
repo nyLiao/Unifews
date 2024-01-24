@@ -39,7 +39,7 @@ if args.dev >= 0:
 
 if not ('_'  in args.algo):
     args.thr_a, args.thr_w = 0.0, 0.0
-flag_run = f"{args.seed}-{args.thr_a}-{args.thr_w}"
+flag_run = f"{args.seed}-{args.thr_a:.1e}-{args.thr_w:.1e}"
 logger = Logger(args.data, args.algo, flag_run=flag_run)
 logger.save_opt(args)
 model_logger = ModelLogger(logger, patience=args.patience, cmp='max',

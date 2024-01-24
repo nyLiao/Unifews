@@ -1,10 +1,10 @@
 ALGO=sgc_thr
-for DATASTR in arxiv
+for DATASTR in products
 do
-    for THRA in 1.0e-06 1.2e-06 1.5e-06
+    for THRA in 2.0e-07 5.0e-07 1.0e-06
     # for THRA in 5e-05 1e-04 2e-04
     do
-        for THRW in 5e-02 1e-01 2e-01
+        for THRW in 1.0e-03 5.0e-03 1.0e-02
         do
             SEED=43
             OUTDIR=./save/${DATASTR}/${ALGO}/${SEED}-${THRA}-${THRW}

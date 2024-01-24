@@ -1,5 +1,5 @@
 {
-    "data": "arxiv",
+    "data": "papers",
     "path": "./data/",
     "algo": "sgc",
     "epochs": 200,
@@ -10,7 +10,7 @@
     "layer": 2,
     "hidden": 512,
     "dropout": 0.5,
-    "thr_a": 1e-6,
+    "thr_a": 1e-7,
     "thr_w": 1e-2,
     "inductive": false,
     "multil": false,

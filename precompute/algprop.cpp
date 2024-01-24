@@ -103,7 +103,7 @@ float A2prop::compute(uint nchnn, Channel* chnss, Eigen::Map<Eigen::MatrixXf> &f
     int it = 0;
     map_feat = Eigen::ArrayXf::LinSpaced(fsum, 0, fsum - 1);
     // random_shuffle(map_feat.data(), map_feat.data() + map_feat.size());
-    cout << "feat dim: " << feat.cols() << ", nodes: " << feat.rows() << ". ";
+    cout << "feat dim: " << feat.cols() << ", nodes: " << feat.rows() << ", edges: " << m <<  ". ";
 
     // Feature-specific array
     dlt_p = Eigen::ArrayXf::Zero(fsum);
@@ -146,11 +146,17 @@ float A2prop::compute(uint nchnn, Channel* chnss, Eigen::Map<Eigen::MatrixXf> &f
     for (it = 1; it <= fsum % NUMTHREAD; it++) {
         start = ends;
         ends += ceil((float)fsum / NUMTHREAD);
+        if (chns[0].type < 0)
+            threads.push_back(thread(&A2prop::feat_ori, this, feat, start, ends));
+        else
         threads.push_back(thread(&A2prop::feat_chn, this, feat, start, ends));
     }
     for (; it <= NUMTHREAD; it++) {
         start = ends;
         ends += fsum / NUMTHREAD;
+        if (chns[0].type < 0)
+            threads.push_back(thread(&A2prop::feat_ori, this, feat, start, ends));
+        else
         threads.push_back(thread(&A2prop::feat_chn, this, feat, start, ends));
     }
     for (int t = 0; t < NUMTHREAD; t++)
@@ -189,7 +195,7 @@ void A2prop::feat_chn(Eigen::Ref<Eigen::MatrixXf> feats, int st, int ed) {
         const float dltinv_n = 1 / dlti_n;
         float maxr_p = maxf_p(ift);     // max positive residue
         float maxr_n = maxf_n(ift);     // max negative residue
-        float maccnt = 0;
+        uint maccnt = 0;
 
         // Init residue
         res1.setZero();
@@ -212,8 +218,8 @@ void A2prop::feat_chn(Eigen::Ref<Eigen::MatrixXf> feats, int st, int ed) {
                 const float old = rprev(u);
                 float thr_p = old * dltinv_p;
                 float thr_n = old * dltinv_n;
-                // if (chn.is_idt)
-                //     rcurr(u) += old;
+                if (!chn.is_acc)
+                    rcurr(u) += old;
                 if (thr_p > 1 || thr_n > 1) {
                     float oldb = 0;
                     if (chn.is_acc) {
@@ -270,9 +276,61 @@ void A2prop::feat_chn(Eigen::Ref<Eigen::MatrixXf> feats, int st, int ed) {
         }
 
         feati += rcurr;
-        macs(ift) += maccnt;
+        macs(ift) += (float)maccnt;
+                }
+            }
+
+
+void A2prop::feat_ori(Eigen::Ref<Eigen::MatrixXf> feats, int st, int ed) {
+    Eigen::VectorXf res0(n), res1(n);
+    Eigen::Map<Eigen::VectorXf> rprev(res1.data(), n), rcurr(res0.data(), n);
+
+    // Loop each feature `ift`, index `it`
+    for (int it = st; it < ed; it++) {
+        const uint ift = map_feat(it);
+        const Channel chn = chns[0];
+        const float alpha = chn.alpha;
+        Eigen::Map<Eigen::VectorXf> feati(feats.col(ift).data(), n);
+        uint maccnt = 0;
+
+        // Init residue
+        res1.setZero();
+        res0 = feats.col(ift);
+        feati.setZero();
+        rprev = res1;
+        rcurr = res0;
+
+        // Loop each hop `il`
+        int il;
+        for (il = 0; il < chn.hop; il++) {
+            rcurr.swap(rprev);
+            rcurr.setZero();
+
+            // Loop each node `u`
+            for (uint u = 0; u < n; u++) {
+                const float old = rprev(u);
+                float oldb = 0;
+                if (chn.is_acc) {
+                    feati(u) += old * alpha;
+                    oldb = old * (1-alpha) * dinvb(u);
+                }
+
+                // Loop each neighbor index `im`, node `v`
+                uint iv;
+                for (iv = pl[u]; iv < pl[u+1]; iv++) {
+                    const uint v = el[iv];
+                    maccnt++;
+                    if (chn.is_acc)
+                        rcurr(v) += oldb * dinva(v);
+                    else
+                        rcurr(v) += old / deg(v);
+                }
+            }
+        }
+
+        feati += rcurr;
+        macs(ift) += (float)maccnt;
     }
 }
-
 
 }  // namespace propagation

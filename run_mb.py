@@ -41,7 +41,7 @@ if args.dev >= 0:
         torch.cuda.manual_seed(args.seed)
 
 if not ('_'  in args.algo):
-    args.thr_a, args.thr_w = 1e-12, 0.0
+    args.thr_a, args.thr_w = 0.0, 0.0
 args.chn['delta'] = args.thr_a
 flag_run = f"{args.seed}-{args.thr_a:.1e}-{args.thr_w:.1e}"
 logger = Logger(args.data, args.algo, flag_run=flag_run)

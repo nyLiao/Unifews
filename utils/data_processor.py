@@ -95,7 +95,7 @@ def split_label(seed, n, n_train_per_class, n_val, labels):
     np.random.seed(seed)
     rnd = set(np.arange(n))
 
-    train_idx = np.array([], dtype=np.int)
+    train_idx = np.array([], dtype=int)
     if labels.ndim == 1:
         lb_nonnan = labels[~np.isnan(labels)]
         nclass = int(lb_nonnan.max()) + 1
@@ -256,7 +256,7 @@ class DataProcess(object):
                 # n_val = NVAL_PER_CLASS * self.nclass
                 n_train = int(0.50 * self.n)
                 n_val = int(0.25 * self.n)
-                if 'paper' in self.name:
+                if 'paper' == self.name:
                     np.random.seed(self.seed)
                     self.input(['idx_train', 'idx_val', 'idx_test'])
                     rnd = np.concatenate((self.idx_train, self.idx_val, self.idx_test))
@@ -264,6 +264,17 @@ class DataProcess(object):
                     self.idx_train = np.sort(rnd[:n_train])
                     self.idx_val = np.sort(rnd[n_train:n_train + n_val])
                     self.idx_test = np.sort(rnd[n_train + n_val:])
+                elif 'papers' in self.name:
+                    n_train = NTRAIN_PER_CLASS * self.nclass
+                    n_val = int(1.5 * NTRAIN_PER_CLASS * self.nclass)
+                    self.input(['idx_train', 'idx_val', 'idx_test'])
+                    rnd = np.concatenate((self.idx_train, self.idx_val, self.idx_test))
+                    idxrange = n_train + n_val + 2000
+                    rnd = np.random.permutation(rnd)[:idxrange]
+                    idx_train, idx_val, idx_test = split_label(self.seed, len(rnd), NTRAIN_PER_CLASS, n_val, self.labels[rnd])
+                    self.idx_train = np.sort(rnd[idx_train])
+                    self.idx_val = np.sort(rnd[idx_val])
+                    self.idx_test = np.sort(rnd[idx_test])
                 elif 'mag' in self.name:
                     # self.idx_train, self.idx_val, self.idx_test = split_label(self.seed, self.n, NTRAIN_PER_CLASS * 5, n_val, self.labels)
                     self.idx_train, self.idx_val, self.idx_test = split_stratify(self.seed, self.n, n_train * 5, n_val, self.labels)

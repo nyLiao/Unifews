@@ -131,9 +131,11 @@ class GCNConvRnd(ConvThr, GCNConvRaw):
             if self.scheme_w == 'pruneall':
                 if prune.is_pruned(self.lin):
                     prune.remove(self.lin, 'weight')
-            amount = int(self.lin.weight.numel() * (1-self.threshold_w))
-            amount -= torch.sum(self.lin.weight == 0).item()
-            amount = max(amount, 0)
+                amount = self.threshold_w
+            else:
+                amount = int(self.lin.weight.numel() * (1-self.threshold_w))
+                amount -= torch.sum(self.lin.weight == 0).item()
+                amount = max(amount, 0)
             prune.RandomUnstructured.apply(self.lin, 'weight', amount)
             x = self.lin(x)
         elif self.scheme_w == 'keep':
@@ -390,9 +392,12 @@ class GATv2ConvRnd(ConvThr, GATv2ConvRaw):
                     prune.remove(self.lin_r, 'weight')
             linset = (self.lin_l,) if self.share_weights else (self.lin_l, self.lin_r)
             for lin in linset:
-                amount = int(lin.weight.numel() * (1-self.threshold_w))
-                amount -= torch.sum(lin.weight == 0).item()
-                amount = max(amount, 0)
+                if self.scheme_w == 'pruneall':
+                    amount = self.threshold_w
+                else:
+                    amount = int(lin.weight.numel() * (1-self.threshold_w))
+                    amount -= torch.sum(lin.weight == 0).item()
+                    amount = max(amount, 0)
                 prune.RandomUnstructured.apply(lin, 'weight', amount)
             x_l = self.lin_l(x).view(-1, H, C)
             x_r = x_l if self.share_weights else self.lin_r(x).view(-1, H, C)

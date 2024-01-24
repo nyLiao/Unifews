@@ -1,9 +1,9 @@
 ALGO=sgc_thr
-for DATASTR in cora
+for DATASTR in arxiv
 do
-    for THRA in 5.0e-05 1.0e-04 2.0e-04
+    for THRA in 2.0e-06 5.0e-06 1.0e-05
     do
-        for THRW in 0.01 0.05
+        for THRW in 1.0e-02 1.0e-01
         do
             SEED=26
             OUTDIR=./save/${DATASTR}/${ALGO}/${SEED}-${THRA}-${THRW}

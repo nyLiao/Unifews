@@ -183,7 +183,7 @@ class MLP(nn.Module):
                         threshold_wi = self.threshold_w * norm_all_in / norm_node_in
                         ThrInPrune.apply(lin, 'weight', threshold_wi)
                 else:
-                    raise NotImplementedError()
+                    pass
             elif self.scheme_w == 'keep':
                 pass
             elif self.scheme_w == 'full':

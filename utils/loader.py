@@ -17,7 +17,8 @@ torch.set_printoptions(linewidth=160, edgeitems=5)
 
 
 def dmap2dct(chnname: str, dmap: DotMap, processor: DataProcess):
-    typedct = {'sgc': 0, 'gbp': 1,
+    typedct = {'sgc': -2, 'gbp': -3,
+               'sgc_agp': 0, 'gbp_agp': 1,
                'sgc_thr': 2, 'gbp_thr': 3,}
     ctype = chnname.split('_')[0]
 
@@ -144,8 +145,9 @@ def load_embedding(datastr: str, algo: str, algo_chn: DotMap,
     # feat *= deg_b
     if not ('_'  in algo):
         if seed >= 15:
-            print(macs_pre/1e9, chn['hop'] * m * nfeat/1e9)
-        macs_pre = chn['hop'] * m * nfeat
+            print(f"[Pre] MACs Real: {macs_pre/1e9}, full: {chn['hop'] * m * nfeat/1e9}, ", end='')
+            print(f"numA Real: {macs_pre/nfeat/1e3}, full: {chn['hop'] * m /1e3}")
+        # macs_pre = chn['hop'] * m * nfeat
 
     feat = feat.transpose()
     feat = matstd_clip(feat, idx['train'], with_mean=True)

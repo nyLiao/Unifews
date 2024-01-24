@@ -40,7 +40,8 @@ namespace algprop {
 
     struct Channel {                    // channel scheme
         int type;
-            // 0: SGC, 1: APPNP
+            // -2: SGC, -3: APPNP
+            // 0: SGC_AGP, 1: APPNP_AGP
             // 2: SGC_thr, 3: APPNP_thr
         bool is_thr;                    // is threshold
         bool is_acc;                    // is accumulate (APPNP)
@@ -72,6 +73,7 @@ namespace algprop {
         float compute(uint nchnn, Channel* chnss, Eigen::Map<Eigen::MatrixXf> &feat);
 
         void feat_chn(Eigen::Ref<Eigen::MatrixXf>feats,int st,int ed);
+        void feat_ori(Eigen::Ref<Eigen::MatrixXf>feats,int st,int ed);
     };
 }
 

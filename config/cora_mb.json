@@ -1,7 +1,7 @@
 {
     "data": "cora",
     "path": "./data/",
-    "algo": "sgc_thr",
+    "algo": "sgc",
     "epochs": 200,
     "patience": 20,
     "batch": 512,

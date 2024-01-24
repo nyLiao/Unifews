@@ -111,9 +111,9 @@ class DataProcess_PyG(DataProcess):
 
 # ====================
 if __name__ == '__main__':
-    # ds = DataProcess_OGB('ogbn-arxiv', path='/share/data/dataset/SCARA')
+    ds = DataProcess_OGB('ogbn-papers100M', path='/share/data/dataset/SCARA')
     # ds = DataProcess_PyGFlickr('flickr', path='/share/data/dataset/SCARA')
-    ds = DataProcess_PyG('cs', path='/share/data/dataset/SCARA')
+    # ds = DataProcess_PyG('cs', path='/share/data/dataset/SCARA')
     ds.fetch()
     ds.calculate(['deg', 'idx_train',])
     print(ds)

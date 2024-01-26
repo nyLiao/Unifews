@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.utils.prune as prune
 
-from .layers import layer_dict, ThrInPrune, LayerNumLogger
+from .layers import layer_dict, ThrInPrune, LayerNumLogger, rewind
 
 
 kwargs_default = {
@@ -175,7 +175,7 @@ class MLP(nn.Module):
             if self.scheme_w in ['pruneall', 'pruneinc']:
                 if self.scheme_w == 'pruneall':
                     if prune.is_pruned(lin):
-                        prune.remove(lin, 'weight')
+                        rewind(lin, 'weight')
                 if self.algo.endswith('_thr'):
                     norm_node_in = torch.norm(x, dim=0)
                     norm_all_in = torch.norm(norm_node_in, dim=None)/x.shape[1]

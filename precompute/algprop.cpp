@@ -149,7 +149,7 @@ float A2prop::compute(uint nchnn, Channel* chnss, Eigen::Map<Eigen::MatrixXf> &f
         if (chns[0].type < 0)
             threads.push_back(thread(&A2prop::feat_ori, this, feat, start, ends));
         else
-        threads.push_back(thread(&A2prop::feat_chn, this, feat, start, ends));
+            threads.push_back(thread(&A2prop::feat_chn, this, feat, start, ends));
     }
     for (; it <= NUMTHREAD; it++) {
         start = ends;
@@ -157,7 +157,7 @@ float A2prop::compute(uint nchnn, Channel* chnss, Eigen::Map<Eigen::MatrixXf> &f
         if (chns[0].type < 0)
             threads.push_back(thread(&A2prop::feat_ori, this, feat, start, ends));
         else
-        threads.push_back(thread(&A2prop::feat_chn, this, feat, start, ends));
+            threads.push_back(thread(&A2prop::feat_chn, this, feat, start, ends));
     }
     for (int t = 0; t < NUMTHREAD; t++)
         threads[t].join();
@@ -186,7 +186,7 @@ void A2prop::feat_chn(Eigen::Ref<Eigen::MatrixXf> feats, int st, int ed) {
         const uint ift = map_feat(it);
         const Channel chn = chns[0];
         const float alpha = chn.alpha;
-        vector<uint> plshort(pl);
+        vector<uint> plshort(pl), plshort2(pl);
         Eigen::Map<Eigen::VectorXf> feati(feats.col(ift).data(), n);
 
         const float dlti_p = dlt_p(ift);
@@ -228,7 +228,7 @@ void A2prop::feat_chn(Eigen::Ref<Eigen::MatrixXf> feats, int st, int ed) {
                     }
 
                     // Loop each neighbor index `im`, node `v`
-                    uint iv;
+                    uint iv, iv2;
                     const uint ivmax = (chn.is_thr) ? plshort[u+1] : pl[u+1];
                     for (iv = pl[u]; iv < ivmax; iv++) {
                         const uint v = el[iv];
@@ -241,33 +241,33 @@ void A2prop::feat_chn(Eigen::Ref<Eigen::MatrixXf> feats, int st, int ed) {
                                 rcurr(v) += old / deg(v);
                             update_maxr(rcurr(v), maxr_p, maxr_n);
                         } else {
-                            break;
-                            plshort[u+1] = min(pl[u+1], iv+chn.hop-il);
-                        }
-                    }
-
-                    const float ran = (float)RAND_MAX / (rand_r(&seedt) % RAND_MAX);
-                    thr_p *= ran;
-                    thr_n *= ran;
-                    for (; iv < ivmax; iv++) {
-                    // <<<<<
-                    // for (; iv < pl[u+1]; iv++) {
-                        const uint v = el[iv];
-                        const float da_v = dega(v);
-                        const float dinva_v = dinva(v);
-                        if (thr_p > da_v) {
-                            maccnt++;
-                            rcurr(v) += dlti_p * dinva_v;
-                            update_maxr(rcurr(v), maxr_p, maxr_n);
-                        } else if (thr_n > da_v) {
-                            maccnt++;
-                            rcurr(v) += dlti_n * dinva_v;
-                            update_maxr(rcurr(v), maxr_p, maxr_n);
-                        } else {
                             // plshort[u+1] = iv;
                             break;
                         }
                     }
+
+                    iv2 = iv;
+                    const float ran = (float)RAND_MAX / (rand_r(&seedt) % RAND_MAX);
+                    thr_p *= ran;
+                    thr_n *= ran;
+                    const uint ivmax2 = (chn.is_thr) ? plshort2[u+1] : pl[u+1];
+                    for (; iv < ivmax2; iv++) {
+                        const uint v = el[iv];
+                        const float da_v = dega(v);
+                        if (thr_p > da_v) {
+                            maccnt++;
+                            rcurr(v) += dlti_p * dinva(v);
+                            update_maxr(rcurr(v), maxr_p, maxr_n);
+                        } else if (thr_n > da_v) {
+                            maccnt++;
+                            rcurr(v) += dlti_n * dinva(v);
+                            update_maxr(rcurr(v), maxr_p, maxr_n);
+                        } else {
+                            break;
+                        }
+                    }
+                    plshort[u+1]  = (iv + iv2) / 2;
+                    plshort2[u+1] = (iv + pl[u+1]) / 2;
                 } else {
                     if (chn.is_acc)
                         feati(u) += old;
@@ -277,8 +277,8 @@ void A2prop::feat_chn(Eigen::Ref<Eigen::MatrixXf> feats, int st, int ed) {
 
         feati += rcurr;
         macs(ift) += (float)maccnt;
-                }
-            }
+    }
+}
 
 
 void A2prop::feat_ori(Eigen::Ref<Eigen::MatrixXf> feats, int st, int ed) {

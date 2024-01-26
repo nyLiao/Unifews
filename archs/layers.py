@@ -6,7 +6,7 @@ from torch_geometric.nn.conv.gcn_conv import *
 from torch_geometric.nn.conv.gatv2_conv import *
 
 from utils.logger import LayerNumLogger
-from .prunes import ThrInPrune, prune
+from .prunes import ThrInPrune, prune, rewind
 
 
 def identity_n_norm(edge_index, edge_weight=None, num_nodes=None,
@@ -265,7 +265,7 @@ class GCNConvThr(ConvThr, GCNConvRaw):
         if self.scheme_w in ['pruneall', 'pruneinc']:
             if self.scheme_w == 'pruneall':
                 if prune.is_pruned(self.lin):
-                    prune.remove(self.lin, 'weight')
+                    rewind(self.lin, 'weight')
             norm_node_in = torch.norm(x, dim=0)
             norm_all_in = torch.norm(norm_node_in, dim=None)/x.shape[1]
             if norm_all_in > 1e-8:
@@ -503,8 +503,8 @@ class GATv2ConvThr(ConvThr, GATv2ConvRaw):
         if self.scheme_w in ['pruneall', 'pruneinc']:
             if self.scheme_w == 'pruneall':
                 if prune.is_pruned(self.lin_l):
-                    prune.remove(self.lin_l, 'weight')
-                    prune.remove(self.lin_r, 'weight')
+                    rewind(self.lin_l, 'weight')
+                    rewind(self.lin_r, 'weight')
             norm_node_in = torch.norm(x, dim=0)
             norm_all_in = torch.norm(norm_node_in, dim=None)/x.shape[1]
             if norm_all_in > 1e-8:

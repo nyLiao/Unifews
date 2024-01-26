@@ -16,6 +16,17 @@ def prune_topk(x, k=0.2):
     return x, idx_0
 
 
+def rewind(module, name):
+    orig = module._parameters[name + "_orig"]
+    setattr(module, name, orig)
+    del module._parameters[name + "_orig"]
+    del module._buffers[name + "_mask"]
+
+    for k, hook in module._forward_pre_hooks.items():
+        if isinstance(hook, prune.BasePruningMethod) and hook._tensor_name == name:
+            del module._forward_pre_hooks[k]
+
+
 class ThrInPrune(prune.BasePruningMethod):
     """Prune by input-dimension thresholding.
     """

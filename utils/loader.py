@@ -66,6 +66,8 @@ def load_edgelist(datastr: str, datapath: str="./data/",
               'test':  labels[idx['test']]}
 
     # Get edge index
+    dp.adj_matrix.setdiag(0)
+    dp.adj_matrix.eliminate_zeros()
     dp.calculate(['edge_idx'])
     adj = {'test':  torch.from_numpy(dp.edge_idx).long()}
     if inductive:

@@ -112,6 +112,27 @@ class GNNThr(nn.Module):
             x = self.convs[-1](x, edge_idx)
             return x
 
+    def get_repre(self, x, edge_idx, layer=None, node_lock=torch.Tensor([]), verbose=False):
+        layer = layer if layer is not None else len(self.convs)-1
+        if self.apply_thr:
+            for i, conv in enumerate(self.convs[:layer]):
+                x, edge_idx = conv(x, edge_idx, node_lock=node_lock, verbose=verbose)
+                if self.use_bn:
+                    x = self.norms[i](x)
+                x = self.act(x)
+                x = self.dropout(x)
+            x, _ = self.convs[layer](x, edge_idx, node_lock=node_lock, verbose=verbose)
+            return x
+        else:
+            for i, conv in enumerate(self.convs[:layer]):
+                x = conv(x, edge_idx)
+                if self.use_bn:
+                    x = self.norms[i](x)
+                x = self.act(x)
+                x = self.dropout(x)
+            x = self.convs[layer](x, edge_idx)
+            return x
+
     def set_scheme(self, scheme_a, scheme_w):
         self.apply(lambda module: set_attr(module, 'scheme_a', scheme_a))
         self.apply(lambda module: set_attr(module, 'scheme_w', scheme_w))
@@ -130,6 +151,8 @@ class GNNThr(nn.Module):
 
     @classmethod
     def batch_counter_hook(cls, module, input, output):
+        if not hasattr(module, '__batch_counter__'):
+            module.__batch_counter__ = 0
         module.__batch_counter__ += 1
 
 

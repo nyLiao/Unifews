@@ -30,6 +30,8 @@ parser.add_argument('-m', '--algo', type=str, default=None, help='Model name')
 parser.add_argument('-n', '--suffix', type=str, default='', help='Save name suffix.')
 parser.add_argument('-a', '--thr_a', type=float, default=None, help='Threshold of adj.')
 parser.add_argument('-w', '--thr_w', type=float, default=None, help='Threshold of weight.')
+parser.add_argument('-l', '--layer', type=int, default=None, help='Layer.')
+parser.add_argument('-p', '--hop', type=int, default=None, help='Hop.')
 args = prepare_opt(parser)
 
 num_thread = 0 if args.data in ['cora', 'citeseer', 'pubmed'] else 8
@@ -43,6 +45,7 @@ if args.dev >= 0:
 if not ('_'  in args.algo):
     args.thr_a, args.thr_w = 0.0, 0.0
 args.chn['delta'] = args.thr_a
+args.chn['hop'] = args.hop if isinstance(args.hop, int) else args.chn['hop']
 flag_run = f"{args.seed}-{args.thr_a:.1e}-{args.thr_w:.1e}"
 logger = Logger(args.data, args.algo, flag_run=flag_run)
 logger.save_opt(args)
@@ -203,6 +206,7 @@ macs_test *= len(idx['test'])
 
 n = len(idx['train']) + len(idx['val']) + len(idx['test'])
 r_train, r_test = len(idx['train'])/n, len(idx['test'])/n
+macs_wtr, macs_wte = macs_tol.val, macs_test
 macs_tol.update(macs_pre * r_train, 0)
 macs_test += macs_pre * r_test
 numel_a = macs_pre * 1e6 / nfeat
@@ -215,11 +219,14 @@ if logger.lvl_config > 1:
     print(f"[Train] time: {time_tol.val:0.4f} s (avg: {time_tol.avg*1000:0.1f} ms), MACs: {macs_tol.val:0.3f} G (avg: {macs_tol.avg:0.1f} G)")
     print(f"[Test]  time: {time_test:0.4f} s, MACs: {macs_test:0.4f} G, Num adj: {numel_a:0.3f} k, Num weight: {numel_w:0.3f} k")
     # print(f"RAM: {mem_ram:.3f} GB, CUDA: {mem_cuda:.3f} GB, Num params: {num_param:0.4f} M, Mem params: {mem_param:0.4f} MB")
+    print(f"Train MACs: {macs_wtr:0.4f} G, Pre MACs: {macs_pre:0.4f} G (avg: {macs_pre*1e6/n:0.4f} K), Test MACs: {macs_wte:0.4f} G (avg: {macs_wte*1e6/len(idx['test']):0.4f} K)")
 if logger.lvl_config > 2:
     logger_tab = Logger(args.data, args.algo, flag_run=flag_run, dir=('./save', args.data))
     logger_tab.file_log = logger_tab.path_join('log_mb.csv')
-    hstr, cstr = logger_tab.str_csv(data=args.data, algo=args.algo, seed=args.seed, thr_a=args.thr_a, thr_w=args.thr_w,
+    hstr, cstr = logger_tab.str_csvg(data=args.data, algo=args.algo, seed=args.seed, thr_a=args.thr_a, thr_w=args.thr_w,
                                     acc_test=acc_test, conv_epoch=epoch_conv, epoch=epoch,
                                     time_train=time_tol.val, macs_train=macs_tol.val,
-                                    time_test=time_test, macs_test=macs_test, numel_a=numel_a, numel_w=numel_w)
+                                    macs_a=macs_pre, macs_wtr=macs_wtr, macs_wte=macs_wte,
+                                    time_test=time_test, macs_test=macs_test, numel_a=numel_a, numel_w=numel_w,
+                                    hop=args.chn['hop'], layer=args.layer)
     logger_tab.print_header(hstr, cstr)

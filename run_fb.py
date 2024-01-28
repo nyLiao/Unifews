@@ -53,8 +53,9 @@ adj, feat, labels, idx, nfeat, nclass = load_edgelist(datastr=args.data, datapat
 model = models.GNNThr(nlayer=args.layer, nfeat=nfeat, nhidden=args.hidden, nclass=nclass,
                     thr_a=args.thr_a, thr_w=args.thr_w, dropout=args.dropout, layer=args.algo)
 model.reset_parameters()
+diag = model.kwargs['diag'] if ('_' in args.algo) else None
 adj['train'] = identity_n_norm(adj['train'], edge_weight=None, num_nodes=feat['train'].shape[0],
-                    rnorm=model.kwargs['rnorm'], diag=model.kwargs['diag'])
+                    rnorm=model.kwargs['rnorm'], diag=diag)
 if logger.lvl_config > 1:
     print(type(model).__name__, args.algo, args.thr_a, args.thr_w)
 if logger.lvl_config > 2:

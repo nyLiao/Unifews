@@ -248,6 +248,7 @@ class GCNConvThr(ConvThr, GCNConvRaw):
             mask_0[self.idx_keep] = False
             mask_0[self.idx_lock] = False
             output[mask_0] = 0
+        # self.msg_bak = output.clone().detach().cpu()
         return output
 
     def forward(self, x: Tensor, edge_tuple: Tuple,

@@ -145,7 +145,7 @@ class Logger(object):
     def str_csvg(self, data, algo, seed, thr_a, thr_w,
                acc_test, conv_epoch, epoch, time_train, macs_train,
                macs_a, macs_wtr, macs_wte,
-               time_test, macs_test, numel_a, numel_w, hop, layer):
+               time_test, macs_test, numel_a, numel_w, hop, layer, time_pre):
         hstr, cstr = '', ''
         hstr += f"      Data|     Model|  Seed|    ThA|    ThW| "
         cstr += f"{data:10s},{algo:10s},{seed:6d},{thr_a:7.1e},{thr_w:7.1e},"
@@ -155,8 +155,8 @@ class Logger(object):
         cstr += f"{time_train:8.4f},{macs_train:8.3f},"
         hstr += f"  Ttest|   CTest|  NumelA|  NumelW| "
         cstr += f"{time_test:8.4f},{macs_test:8.4f},{numel_a:8.3f},{numel_w:8.3f},"
-        hstr += f"   CPre|     CTr|     CTe| Hop| Lay "
-        cstr += f"{macs_a:8.4f},{macs_wtr:8.4f},{macs_wte:8.4f},{hop:4d},{layer:4d}"
+        hstr += f"   CPre|     CTr|     CTe| Hop| Lay|   TPre "
+        cstr += f"{macs_a:8.4f},{macs_wtr:8.4f},{macs_wte:8.4f},{hop:4d},{layer:4d},{time_pre:8.4f}"
         return hstr, cstr
 
 class ModelLogger(object):

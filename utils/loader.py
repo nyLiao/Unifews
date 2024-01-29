@@ -66,8 +66,8 @@ def load_edgelist(datastr: str, datapath: str="./data/",
               'test':  labels[idx['test']]}
 
     # Get edge index
-    dp.adj_matrix.setdiag(0)
-    dp.adj_matrix.eliminate_zeros()
+    # dp.adj_matrix.setdiag(0)
+    # dp.adj_matrix.eliminate_zeros()
     dp.calculate(['edge_idx'])
     adj = {'test':  torch.from_numpy(dp.edge_idx).long()}
     if inductive:
@@ -143,7 +143,7 @@ def load_embedding(datastr: str, algo: str, algo_chn: DotMap,
     # assert idx_zero.size == 0, f"Isolated nodes found: {idx_zero}"
     # deg_b[idx_zero] = 1
     # feat /= deg_b
-    macs_pre = py_a2prop.compute(1, [chn], feat)
+    macs_pre, time_pre = py_a2prop.compute(1, [chn], feat)
     # feat *= deg_b
     if not ('_'  in algo):
         if seed >= 15:
@@ -159,4 +159,4 @@ def load_embedding(datastr: str, algo: str, algo_chn: DotMap,
     del feat
     gc.collect()
     # print(feats['train'].shape)
-    return feats, labels, idx, nfeat, nclass, macs_pre/1e9
+    return feats, labels, idx, nfeat, nclass, macs_pre/1e9, time_pre

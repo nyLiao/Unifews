@@ -16,7 +16,7 @@
     "multil": false,
     "chn": {
         "hop": 20,
-        "alpha": 0.5,
+        "alpha": 0.3,
         "rrz": 0.5
     }
 }

@@ -54,7 +54,7 @@ model_logger = ModelLogger(logger, patience=args.patience, cmp='max',
 stopwatch = metric.Stopwatch()
 
 # ========== Load
-feat, labels, idx, nfeat, nclass, macs_pre = load_embedding(datastr=args.data,
+feat, labels, idx, nfeat, nclass, macs_pre, time_pre = load_embedding(datastr=args.data,
                 datapath=args.path, algo=args.algo, algo_chn=args.chn,
                 inductive=args.inductive, multil=args.multil, seed=args.seed)
 
@@ -216,6 +216,7 @@ numel_w = model.get_numel()
 if logger.lvl_config > 0:
     print(f"[Val] best acc: {acc_best:0.5f} (epoch: {epoch_conv}/{epoch}), [Test] best acc: {acc_test:0.5f}", flush=True)
 if logger.lvl_config > 1:
+    print(f"[Pre]   time: {time_pre:0.4f} s, MACs: {macs_pre:0.4f} G")
     print(f"[Train] time: {time_tol.val:0.4f} s (avg: {time_tol.avg*1000:0.1f} ms), MACs: {macs_tol.val:0.3f} G (avg: {macs_tol.avg:0.1f} G)")
     print(f"[Test]  time: {time_test:0.4f} s, MACs: {macs_test:0.4f} G, Num adj: {numel_a:0.3f} k, Num weight: {numel_w:0.3f} k")
     # print(f"RAM: {mem_ram:.3f} GB, CUDA: {mem_cuda:.3f} GB, Num params: {num_param:0.4f} M, Mem params: {mem_param:0.4f} MB")
@@ -228,5 +229,5 @@ if logger.lvl_config > 2:
                                     time_train=time_tol.val, macs_train=macs_tol.val,
                                     macs_a=macs_pre, macs_wtr=macs_wtr, macs_wte=macs_wte,
                                     time_test=time_test, macs_test=macs_test, numel_a=numel_a, numel_w=numel_w,
-                                    hop=args.chn['hop'], layer=args.layer)
+                                    hop=args.chn['hop'], layer=args.layer, time_pre=time_pre)
     logger_tab.print_header(hstr, cstr)

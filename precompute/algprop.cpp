@@ -85,7 +85,7 @@ void A2prop::load(string dataset, uint mm, uint nn, uint seedd) {
 }
 
 // Computation call entry
-float A2prop::compute(uint nchnn, Channel* chnss, Eigen::Map<Eigen::MatrixXf> &feat) {
+float A2prop::compute(uint nchnn, Channel* chnss, Eigen::Map<Eigen::MatrixXf> &feat, float &ttime) {
     // Node-specific array
     chns = chnss;
     assert(nchnn <= 4);
@@ -171,6 +171,7 @@ float A2prop::compute(uint nchnn, Channel* chnss, Eigen::Map<Eigen::MatrixXf> &f
     cout << "Max   PRAM: " << get_proc_memory() << " GB, ";
     cout << "End    RAM: " << get_stat_memory() << " GB, ";
     cout << "MACs: " << macs.sum()/1e9 << " G" << endl;
+    ttime = ttod;
     return macs.sum();
 }
 
@@ -218,8 +219,10 @@ void A2prop::feat_chn(Eigen::Ref<Eigen::MatrixXf> feats, int st, int ed) {
                 const float old = rprev(u);
                 float thr_p = old * dltinv_p;
                 float thr_n = old * dltinv_n;
-                if (!chn.is_acc)
+                // if ((!chn.is_acc) && (m < 1e9)) {
+                if (!chn.is_acc) {
                     rcurr(u) += old;
+                }
                 if (thr_p > 1 || thr_n > 1) {
                     float oldb = 0;
                     if (chn.is_acc) {
@@ -267,7 +270,10 @@ void A2prop::feat_chn(Eigen::Ref<Eigen::MatrixXf> feats, int st, int ed) {
                         }
                     }
                     plshort[u+1]  = (iv + iv2) / 2;
-                    plshort2[u+1] = (iv + pl[u+1]) / 2;
+                    if (m < 1e8){
+                        plshort2[u+1] = (iv + pl[u+1]) / 2;
+                    }
+
                 } else {
                     if (chn.is_acc)
                         feati(u) += old;

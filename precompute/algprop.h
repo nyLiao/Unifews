@@ -70,7 +70,7 @@ namespace algprop {
         Eigen::ArrayXf maxf_p, maxf_n;  // max feature coefficient
 
         void load(string dataset, uint mm, uint nn, uint seedd);
-        float compute(uint nchnn, Channel* chnss, Eigen::Map<Eigen::MatrixXf> &feat);
+        float compute(uint nchnn, Channel* chnss, Eigen::Map<Eigen::MatrixXf> &feat, float &time);
 
         void feat_chn(Eigen::Ref<Eigen::MatrixXf>feats,int st,int ed);
         void feat_ori(Eigen::Ref<Eigen::MatrixXf>feats,int st,int ed);

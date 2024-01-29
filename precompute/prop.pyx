@@ -13,7 +13,8 @@ cdef class A2Prop:
 	def compute(self, unsigned int nchn, chns, np.ndarray feat):
 		cdef:
 			Channel* c_chns = <Channel*> malloc(nchn * sizeof(Channel))
-			float res
+			float res1, res2
+		res2 = 0.0
 		for i in range(nchn):
 			c_chns[i].type = chns[i]['type']
 			c_chns[i].is_thr = (chns[i]['type'] > 1)
@@ -26,6 +27,6 @@ cdef class A2Prop:
 			c_chns[i].rra = chns[i]['rra']
 			c_chns[i].rrb = chns[i]['rrb']
 
-		res = self.c_a2prop.compute(nchn, c_chns, Map[MatrixXf](feat))
+		res1 = self.c_a2prop.compute(nchn, c_chns, Map[MatrixXf](feat), res2)
 		free(c_chns)
-		return res
+		return res1, res2

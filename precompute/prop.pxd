@@ -25,4 +25,4 @@ cdef extern from "algprop.h" namespace "algprop":
         A2prop() except+
         #         dataset,   m,    n, seed
         void load(string, uint, uint, uint)
-        float compute(uint, Channel*, Map[MatrixXf] &)
+        float compute(uint, Channel*, Map[MatrixXf] &, float &)

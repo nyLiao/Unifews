@@ -1,8 +1,8 @@
 for DATASTR in arxiv
 do
-    for ALGO in sgc gbp sgc_agp gbp_agp
+    for ALGO in sgc gbp
     do
-        for SEED in 41 42 43
+        for SEED in 44 45 46
         do
             OUTDIR=./save/${DATASTR}/${ALGO}/${SEED}-0.0e+00-0.0e+00
             mkdir -p ${OUTDIR}

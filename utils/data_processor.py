@@ -265,6 +265,7 @@ class DataProcess(object):
                     self.idx_val = np.sort(rnd[n_train:n_train + n_val])
                     self.idx_test = np.sort(rnd[n_train + n_val:])
                 elif 'papers' in self.name:
+                    # Common
                     n_train = NTRAIN_PER_CLASS * self.nclass
                     n_val = int(1.5 * NTRAIN_PER_CLASS * self.nclass)
                     self.input(['idx_train', 'idx_val', 'idx_test'])
@@ -272,6 +273,13 @@ class DataProcess(object):
                     idxrange = n_train + n_val + 2000
                     rnd = np.random.permutation(rnd)[:idxrange]
                     idx_train, idx_val, idx_test = split_label(self.seed, len(rnd), NTRAIN_PER_CLASS, n_val, self.labels[rnd])
+                    # NIGCN
+                    # self.input(['idx_train', 'idx_val', 'idx_test'])
+                    # rnd = np.concatenate((self.idx_train, self.idx_val, self.idx_test))
+                    # n_train, n_val = 1000, 25000
+                    # idxrange = n_train + n_val + 25000
+                    # idx_train, idx_val, idx_test = split_random(self.seed, idxrange, n_train, n_val)
+
                     self.idx_train = np.sort(rnd[idx_train])
                     self.idx_val = np.sort(rnd[idx_val])
                     self.idx_test = np.sort(rnd[idx_test])

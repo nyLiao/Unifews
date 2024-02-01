@@ -3,12 +3,14 @@ This is the original code for *Unifews: Unified Entry-Wise Sparsification for Ef
 
 ## Dependencies
 ### Python
-In `env.txt` and can be installed by:
+Installed `env.txt` by conda:
 ```bash
 conda create --name <env> --file env.txt
 ```
 
 ### C++
+* C++ 14
+* CMake 3.16
 * [eigen3](https://eigen.tuxfamily.org/index.php?title=Main_Page)
 
 ## Experiment
@@ -22,8 +24,7 @@ conda create --name <env> --file env.txt
   * `adj_el.bin`, `adj_pl.bin`, `attribute.txt`, `degree.npz`: graph files for precomputation
 
 ### Decoupled Model Propagation
-1. Environment: CMake 3.16, C++ 14. 
-2. Compile Cython:
+1. Compile Cython:
 ```bash
 cd precompute
 python setup.py build_ext --inplace

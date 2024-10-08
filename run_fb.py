@@ -22,12 +22,13 @@ torch.set_printoptions(linewidth=160, edgeitems=5)
 # ========== Training settings
 parser = argparse.ArgumentParser()
 parser.add_argument('-f', '--seed', type=int, default=11, help='Random seed.')
-parser.add_argument('-v', '--dev', type=int, default=1, help='Device id.')
+parser.add_argument('-v', '--dev', type=int, default=0, help='Device id.')
 parser.add_argument('-c', '--config', type=str, default='cora', help='Config file name.')
 parser.add_argument('-m', '--algo', type=str, default=None, help='Model name')
 parser.add_argument('-n', '--suffix', type=str, default='', help='Save name suffix.')
 parser.add_argument('-a', '--thr_a', type=float, default=None, help='Threshold of adj.')
 parser.add_argument('-w', '--thr_w', type=float, default=None, help='Threshold of weight.')
+parser.add_argument('-l', '--layer', type=int, default=None, help='Layer.')
 args = prepare_opt(parser)
 
 random.seed(args.seed)
@@ -53,8 +54,12 @@ stopwatch = metric.Stopwatch()
 adj, feat, labels, idx, nfeat, nclass = load_edgelist(datastr=args.data, datapath=args.path,
                 inductive=args.inductive, multil=args.multil, seed=args.seed)
 
-model = models.GNNThr(nlayer=args.layer, nfeat=nfeat, nhidden=args.hidden, nclass=nclass,
-                    thr_a=args.thr_a, thr_w=args.thr_w, dropout=args.dropout, layer=args.algo)
+if args.algo.split('_')[0] in ['gcn2']:
+    model = models.SandwitchThr(nlayer=args.layer, nfeat=nfeat, nhidden=args.hidden, nclass=nclass,
+                        thr_a=args.thr_a, thr_w=args.thr_w, dropout=args.dropout, layer=args.algo)
+else:
+    model = models.GNNThr(nlayer=args.layer, nfeat=nfeat, nhidden=args.hidden, nclass=nclass,
+                        thr_a=args.thr_a, thr_w=args.thr_w, dropout=args.dropout, layer=args.algo)
 model.reset_parameters()
 diag = model.kwargs['diag'] if ('_' in args.algo) else None
 adj['train'] = identity_n_norm(adj['train'], edge_weight=None, num_nodes=feat['train'].shape[0],

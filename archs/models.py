@@ -14,12 +14,14 @@ kwargs_default = {
         'normalize': False,
         'rnorm': 0.5,
         'diag': 1.,
+        'depth_inv': False,
     },
     'gin': {
         'eps': 0.0,
         'train_eps': False,
         'rnorm': None,
         'diag': 1.,
+        'depth_inv': False,
     },
     'gat': {
         'heads': 8,
@@ -28,7 +30,19 @@ kwargs_default = {
         'add_self_loops': False,
         'rnorm': None,
         'diag': 1.,
+        'depth_inv': False,
     },
+    'gcn2': {
+        'alpha': 0.1,
+        'theta': 0.5,
+        'shared_weights': True,
+        'cached': False,
+        'add_self_loops': False,
+        'normalize': False,
+        'rnorm': 0.5,
+        'diag': 1.,
+        'depth_inv': True,
+    }
 }
 
 
@@ -72,17 +86,20 @@ class GNNThr(nn.Module):
         self.convs = nn.ModuleList()
         self.norms = nn.ModuleList()
 
+        depths = list(range(nlayer))
+        if not self.kwargs.pop('depth_inv'):
+            depths = list(reversed(depths))
         self.convs.append(Conv(nfeat, nhidden,
-                               depth=nlayer, thr_a=thr_a[0], thr_w=thr_w[0],
+                               depth=depths[0], thr_a=thr_a[0], thr_w=thr_w[0],
                                **self.kwargs))
         self.norms.append(nn.BatchNorm1d(nhidden, **norm_kwargs))
         for layer in range(1, nlayer - 1):
             self.convs.append(Conv(nhidden, nhidden,
-                                   depth=nlayer-layer, thr_a=thr_a[layer], thr_w=thr_w[layer],
+                                   depth=depths[layer], thr_a=thr_a[layer], thr_w=thr_w[layer],
                                    **self.kwargs))
             self.norms.append(nn.BatchNorm1d(nhidden, **norm_kwargs))
         self.convs.append(Conv(nhidden, nclass,
-                               depth=0, thr_a=thr_a[nlayer-1], thr_w=thr_w[nlayer-1],
+                               depth=depths[nlayer-1], thr_a=thr_a[nlayer-1], thr_w=thr_w[nlayer-1],
                                **self.kwargs))
 
     def reset_parameters(self):
@@ -154,6 +171,47 @@ class GNNThr(nn.Module):
         if not hasattr(module, '__batch_counter__'):
             module.__batch_counter__ = 0
         module.__batch_counter__ += 1
+
+
+class SandwitchThr(GNNThr):
+    def __init__(self, nlayer, nfeat, nhidden, nclass,
+                 thr_a=0.0, thr_w=0.0, dropout: float = 0.0, layer: str = 'gcn',
+                 **kwargs,):
+        super(SandwitchThr, self).__init__(nlayer, nhidden, nhidden, nhidden,
+                                           thr_a=thr_a, thr_w=thr_w, dropout=dropout, layer=layer,
+                                           **kwargs)
+        self.lin_in = nn.Linear(nfeat, nhidden)
+        self.lin_out = nn.Linear(nhidden, nclass)
+        norm_kwargs = {'affine': True, 'track_running_stats': True, 'momentum': 0.9}
+        self.norms.append(nn.BatchNorm1d(nhidden, **norm_kwargs))
+
+    def forward(self, x, edge_idx, node_lock=torch.Tensor([]), verbose=False):
+        x = self.lin_in(x)
+        if self.use_bn:
+            x = self.norms[-1](x)
+        x = x_0 = self.act(x)
+        x = self.dropout(x)
+
+        if self.apply_thr:
+            # Layer inheritence of edge_idx
+            for i, conv in enumerate(self.convs[:-1]):
+                x, edge_idx = conv(x, x_0, edge_idx, node_lock=node_lock, verbose=verbose)
+                if self.use_bn:
+                    x = self.norms[i](x)
+                x = self.act(x)
+                x = self.dropout(x)
+            x, _ = self.convs[-1](x, x_0, edge_idx, node_lock=node_lock, verbose=verbose)
+        else:
+            for i, conv in enumerate(self.convs[:-1]):
+                x = conv(x, x_0, edge_idx)
+                if self.use_bn:
+                    x = self.norms[i](x)
+                x = self.act(x)
+                x = self.dropout(x)
+            x = self.convs[-1](x, x_0, edge_idx)
+
+        x = self.lin_out(x)
+        return x
 
 
 class MLP(nn.Module):

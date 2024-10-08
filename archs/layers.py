@@ -1,3 +1,4 @@
+from math import log
 import numpy as np
 import torch
 import torch.nn as nn
@@ -44,6 +45,107 @@ def identity_n_norm(edge_index, edge_weight=None, num_nodes=None,
         return edge_index, edge_weight
 
     raise NotImplementedError()
+
+
+class GCNIIConv(MessagePassing):
+    '''Modified torch_geometric.nn.conv.GCN2Conv to use Linear instead of weight Parameter
+    '''
+    _cached_edge_index: Optional[OptPairTensor]
+    _cached_adj_t: Optional[SparseTensor]
+
+    def __init__(self, channels: int, channels_fake: int, alpha: float, theta: float = None,
+                 depth: int = None, shared_weights: bool = True,
+                 cached: bool = False, add_self_loops: bool = True,
+                 normalize: bool = True, **kwargs):
+
+        kwargs.setdefault('aggr', 'add')
+        super().__init__(**kwargs)
+
+        self.channels = channels
+        self.alpha = alpha
+        self.beta = 1.
+        if theta is not None or depth is not None:
+            assert theta is not None and depth is not None
+            self.beta = log(theta / (depth + 1) + 1)
+        self.cached = cached
+        self.normalize = normalize
+        self.add_self_loops = add_self_loops
+
+        self._cached_edge_index = None
+        self._cached_adj_t = None
+
+        self.lin1 = Linear(channels, channels, bias=False,
+                           weight_initializer='glorot')
+
+        if shared_weights:
+            self.register_parameter('lin2', None)
+        else:
+            self.lin2 = Linear(channels, channels, bias=False,
+                               weight_initializer='glorot')
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        super().reset_parameters()
+        self.lin1.reset_parameters()
+        if self.lin2 is not None:
+            self.lin2.reset_parameters()
+        self._cached_edge_index = None
+        self._cached_adj_t = None
+
+    def forward(self, x: Tensor, x_0: Tensor, edge_index: Adj,
+                edge_weight: OptTensor = None) -> Tensor:
+
+        if self.normalize:
+            if isinstance(edge_index, Tensor):
+                cache = self._cached_edge_index
+                if cache is None:
+                    edge_index, edge_weight = gcn_norm(  # yapf: disable
+                        edge_index, edge_weight, x.size(self.node_dim), False,
+                        self.add_self_loops, self.flow, dtype=x.dtype)
+                    if self.cached:
+                        self._cached_edge_index = (edge_index, edge_weight)
+                else:
+                    edge_index, edge_weight = cache[0], cache[1]
+
+            elif isinstance(edge_index, SparseTensor):
+                cache = self._cached_adj_t
+                if cache is None:
+                    edge_index = gcn_norm(  # yapf: disable
+                        edge_index, edge_weight, x.size(self.node_dim), False,
+                        self.add_self_loops, self.flow, dtype=x.dtype)
+                    if self.cached:
+                        self._cached_adj_t = edge_index
+                else:
+                    edge_index = cache
+
+        # propagate_type: (x: Tensor, edge_weight: OptTensor)
+        x = self.propagate(edge_index, x=x, edge_weight=edge_weight)
+
+        x.mul_(1 - self.alpha)
+        x_0 = self.alpha * x_0[:x.size(0)]
+
+        if self.lin2 is None:
+            out = x.add_(x_0)
+            out = torch.addmm(out, out, self.lin1.weight, beta=1. - self.beta,
+                              alpha=self.beta)
+        else:
+            out = torch.addmm(x, x, self.lin1.weight, beta=1. - self.beta,
+                              alpha=self.beta)
+            out = out + torch.addmm(x_0, x_0, self.lin2.weight,
+                                    beta=1. - self.beta, alpha=self.beta)
+
+        return out
+
+    def message(self, x_j: Tensor, edge_weight: OptTensor) -> Tensor:
+        return x_j if edge_weight is None else edge_weight.view(-1, 1) * x_j
+
+    def message_and_aggregate(self, adj_t: Adj, x: Tensor) -> Tensor:
+        return spmm(adj_t, x, reduce=self.aggr)
+
+    def __repr__(self) -> str:
+        return (f'{self.__class__.__name__}({self.channels}, '
+                f'alpha={self.alpha}, beta={self.beta})')
 
 # ==========
 class ConvThr(nn.Module):
@@ -655,8 +757,143 @@ class GINConvRaw(pyg_nn.GINConv):
         super(GINConvRaw, self).__init__(nn_default, eps, train_eps, **kwargs)
 
 
-class GCNIIConvRaw(pyg_nn.GCN2Conv):
-    pass
+class GCNIIConvRaw(GCNIIConv):
+    def __init__(self, *args, **kwargs):
+        super(GCNIIConvRaw, self).__init__(*args, **kwargs)
+        self.logger_a = LayerNumLogger()
+        self.logger_w = LayerNumLogger()
+        self.logger_in = LayerNumLogger()
+        self.logger_msg = LayerNumLogger()
+
+    def forward(self, x, x_0, edge_tuple: Tuple) -> Tensor:
+        (edge_index, edge_weight) = edge_tuple
+        self.logger_a.numel_after = edge_index.shape[1]
+        self.logger_w.numel_after = self.lin1.weight.numel()
+        if self.lin2 is not None:
+            self.logger_w.numel_after += self.lin2.weight.numel()
+        return super().forward(x, x_0, edge_index, edge_weight)
+
+    @classmethod
+    def cnt_flops(cls, module, input, output):
+        x_in, x_0, (edge_index, edge_weight) = input
+        x_out = output
+        f_in, f_out = x_in.shape[-1], x_out.shape[-1]
+        n, m = x_in.shape[0], edge_index.shape[1]
+
+        # Linear
+        module.__flops__ += int(f_in * f_out * n)
+        if module.lin2 is not None:
+            module.__flops__ += int(f_in * f_out * n)
+        # Message
+        module.__flops__ += f_in * m
+
+
+class GCNIIConvThr(ConvThr, GCNIIConvRaw):
+    def __init__(self, *args, thr_a, thr_w, **kwargs):
+        super(GCNIIConvThr, self).__init__(*args, thr_a=thr_a, thr_w=thr_w, **kwargs)
+        self.prune_lst = [self.lin1]
+        if self.lin2 is not None:
+            self.prune_lst.append(self.lin2)
+        self.register_message_forward_hook(self.prune_on_msg)
+
+    def prune_on_msg(self, module, inputs, output):
+        if self.scheme_a in ['pruneall', 'pruneinc']:
+            if self.scheme_a == 'pruneinc':
+                raise NotImplementedError()
+            else:
+                mask_0 = torch.zeros(output.shape[0], dtype=torch.bool, device=output.device)
+
+            norm_feat_msg = torch.norm(output, dim=1)
+            norm_all_msg = torch.norm(norm_feat_msg, dim=None, p=1) / output.shape[0]
+            mask_cmp = norm_feat_msg < self.threshold_a * norm_all_msg
+            mask_0 = torch.logical_or(mask_0, mask_cmp)
+            mask_0[self.idx_lock] = False
+            output[mask_0] = 0
+            self.idx_keep = torch.where(~mask_0)[0]
+        elif self.scheme_a == 'keep':
+            mask_0 = torch.ones(output.shape[0], dtype=torch.bool)
+            mask_0[self.idx_keep] = False
+            mask_0[self.idx_lock] = False
+            output[mask_0] = 0
+        return output
+
+    def forward(self, x: Tensor, x_0: Tensor, edge_tuple: Tuple,
+                node_lock: OptTensor = None, verbose: bool = False):
+        def trans(xx, xx_0):
+            if self.lin2 is None:
+                out = xx.add_(xx_0)
+                out = torch.addmm(out, out, self.lin1.weight, beta=1. - self.beta,
+                                alpha=self.beta)
+            else:
+                out = torch.addmm(xx, xx, self.lin1.weight, beta=1. - self.beta,
+                                alpha=self.beta)
+                out = out + torch.addmm(xx_0, xx_0, self.lin2.weight,
+                                        beta=1. - self.beta, alpha=self.beta)
+            return out
+
+        (edge_index, edge_weight) = edge_tuple
+
+        self.idx_lock = self.get_idx_lock(edge_index, node_lock)
+        x = self.propagate(edge_index, x=x, edge_weight=edge_weight, size=None)
+
+        x.mul_(1 - self.alpha)
+        x_0 = self.alpha * x_0[:x.size(0)]
+
+        if self.scheme_w in ['pruneall', 'pruneinc']:
+            if self.scheme_w == 'pruneall':
+                if prune.is_pruned(self.lin1):
+                    rewind(self.lin1, 'weight')
+                if self.lin2 is not None and prune.is_pruned(self.lin2):
+                    rewind(self.lin2, 'weight')
+            else:
+                if prune.is_pruned(self.lin1):
+                    prune.remove(self.lin1, 'weight')
+                if self.lin2 is not None and prune.is_pruned(self.lin2):
+                    prune.remove(self.lin2, 'weight')
+            norm_node_in = torch.norm(x, dim=0)
+            norm_all_in = torch.norm(norm_node_in, dim=None) / x.shape[1]
+            if norm_all_in > 1e-8:
+                threshold_wi = self.threshold_w * norm_all_in / norm_node_in
+                ThrInPrune.apply(self.lin1, 'weight', threshold_wi)
+                if self.lin2 is not None:
+                    ThrInPrune.apply(self.lin2, 'weight', threshold_wi)
+            out = trans(x, x_0)
+        elif self.scheme_w == 'keep':
+            out = trans(x, x_0)
+        elif self.scheme_w == 'full':
+            raise NotImplementedError()
+        self.logger_w.numel_before = self.lin1.weight.numel()
+        self.logger_w.numel_after = torch.sum(self.lin1.weight != 0).item()
+        if self.lin2 is not None:
+            self.logger_w.numel_before += self.lin2.weight.numel()
+            self.logger_w.numel_after += torch.sum(self.lin2.weight != 0).item()
+
+        if self.scheme_a in ['pruneall', 'pruneinc', 'keep']:
+            self.logger_a.numel_before = edge_index.shape[1]
+            self.logger_a.numel_after = self.idx_keep.shape[0]
+            # if verbose:
+            #     print(f"  A: {self.logger_a}, W: {self.logger_w}")
+            edge_index = edge_index[:, self.idx_keep]
+            edge_weight = edge_weight[self.idx_keep]
+        else:
+            self.logger_a.numel_before = edge_index.shape[1]
+            self.logger_a.numel_after = edge_index.shape[1]
+
+        with torch.cuda.device(edge_index.device):
+            torch.cuda.empty_cache()
+        return out, (edge_index, edge_weight)
+
+    @classmethod
+    def cnt_flops(cls, module, input, output):
+        x_in, x_0, _ = input
+        x_out, (edge_index, edge_weight) = output
+        f_in, f_out = x_in.shape[-1], x_out.shape[-1]
+        n, m = x_in.shape[0], edge_index.shape[1]
+
+        module.__flops__ += int((f_in * f_out * module.logger_w.ratio) * n)
+        if module.lin2 is not None:
+            module.__flops__ += int(f_in * f_out * module.logger_w.ratio * n)
+        module.__flops__ += f_in * (m - n)
 
 
 # ==========
@@ -667,8 +904,12 @@ def Linear_cnt_flops(module, input, output):
     input_last_dim = input.shape[-1]
     pre_last_dims_prod = np.prod(input.shape[0:-1], dtype=np.int64)
     bias_flops = output_last_dim if module.bias is not None else 0
-    module.__flops__ += int((input_last_dim * output_last_dim + bias_flops)
-                            * pre_last_dims_prod * module.logger_w.ratio)
+    if hasattr(module, 'logger_w'):
+        module.__flops__ += int((input_last_dim * output_last_dim + bias_flops)
+                                * pre_last_dims_prod * module.logger_w.ratio)
+    else:
+        module.__flops__ += int((input_last_dim * output_last_dim + bias_flops)
+                                * pre_last_dims_prod)
 
 
 layer_dict = {
@@ -680,6 +921,7 @@ layer_dict = {
     'gat_thr': GATv2ConvThr,
     'gin': GINConvRaw,
     'gcn2': GCNIIConvRaw,
+    'gcn2_thr': GCNIIConvThr,
 }
 
 flops_modules_dict = {
@@ -690,4 +932,6 @@ flops_modules_dict = {
     GATv2ConvRaw: GATv2ConvRaw.cnt_flops,
     GATv2ConvRnd: GATv2ConvRnd.cnt_flops,
     GATv2ConvThr: GATv2ConvThr.cnt_flops,
+    GCNIIConvRaw: GCNIIConvRaw.cnt_flops,
+    GCNIIConvThr: GCNIIConvThr.cnt_flops,
 }

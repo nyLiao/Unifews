@@ -128,9 +128,9 @@ class GCNConvRnd(ConvThr, GCNConvRaw):
         (edge_index, edge_weight) = edge_tuple
 
         if self.scheme_w in ['pruneall', 'pruneinc']:
+            if prune.is_pruned(self.lin):
+                prune.remove(self.lin, 'weight')
             if self.scheme_w == 'pruneall':
-                if prune.is_pruned(self.lin):
-                    prune.remove(self.lin, 'weight')
                 amount = self.threshold_w
             else:
                 amount = int(self.lin.weight.numel() * (1-self.threshold_w))
@@ -267,6 +267,9 @@ class GCNConvThr(ConvThr, GCNConvRaw):
             if self.scheme_w == 'pruneall':
                 if prune.is_pruned(self.lin):
                     rewind(self.lin, 'weight')
+            else:
+                if prune.is_pruned(self.lin):
+                    prune.remove(self.lin, 'weight')
             norm_node_in = torch.norm(x, dim=0)
             norm_all_in = torch.norm(norm_node_in, dim=None)/x.shape[1]
             if norm_all_in > 1e-8:
@@ -387,10 +390,9 @@ class GATv2ConvRnd(ConvThr, GATv2ConvRaw):
 
         # Weight pruning
         if self.scheme_w in ['pruneall', 'pruneinc']:
-            if self.scheme_w == 'pruneall':
-                if prune.is_pruned(self.lin_l):
-                    prune.remove(self.lin_l, 'weight')
-                    prune.remove(self.lin_r, 'weight')
+            if prune.is_pruned(self.lin_l):
+                prune.remove(self.lin_l, 'weight')
+                prune.remove(self.lin_r, 'weight')
             linset = (self.lin_l,) if self.share_weights else (self.lin_l, self.lin_r)
             for lin in linset:
                 if self.scheme_w == 'pruneall':
@@ -506,6 +508,10 @@ class GATv2ConvThr(ConvThr, GATv2ConvRaw):
                 if prune.is_pruned(self.lin_l):
                     rewind(self.lin_l, 'weight')
                     rewind(self.lin_r, 'weight')
+            else:
+                if prune.is_pruned(self.lin_l):
+                    prune.remove(self.lin_l, 'weight')
+                    prune.remove(self.lin_r, 'weight')
             norm_node_in = torch.norm(x, dim=0)
             norm_all_in = torch.norm(norm_node_in, dim=None)/x.shape[1]
             if norm_all_in > 1e-8:

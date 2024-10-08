@@ -53,12 +53,12 @@ stopwatch = metric.Stopwatch()
 adj, feat, labels, idx, nfeat, nclass = load_edgelist(datastr=args.data, datapath=args.path,
                 inductive=args.inductive, multil=args.multil, seed=args.seed)
 
-model = models.GNNThr(nlayer=args.layer, nfeat=nfeat, nhidden=args.hidden, nclass=nclass,
-                    thr_a=args.thr_a, thr_w=args.thr_w, dropout=args.dropout, layer=args.algo)
+model = models.MLP(nlayer=args.layer, nfeat=nfeat, nhidden=args.hidden, nclass=nclass,
+                   thr_w=args.thr_w, dropout=args.dropout, layer=args.algo)
 model.reset_parameters()
 diag = model.kwargs['diag'] if ('_' in args.algo) else None
 adj['train'] = identity_n_norm(adj['train'], edge_weight=None, num_nodes=feat['train'].shape[0],
-                    rnorm=model.kwargs['rnorm'], diag=diag)
+                    rnorm=None, diag=diag)
 if logger.lvl_config > 1:
     print(type(model).__name__, args.algo, args.thr_a, args.thr_w)
 if logger.lvl_config > 2:
@@ -76,10 +76,10 @@ loss_fn = nn.BCEWithLogitsLoss() if args.multil else nn.CrossEntropyLoss()
 def train(x, edge_idx, y, idx_split, epoch, verbose=False):
     model.train()
     if epoch < args.epochs//2:
-        model.set_scheme('pruneall', 'pruneall')
+        model.set_scheme('pruneall')
     else:
         # model.set_scheme('pruneinc', 'pruneinc')
-        model.set_scheme('pruneall', 'pruneinc')
+        model.set_scheme('pruneinc')
     x, y = x.cuda(args.dev), y.cuda(args.dev)
     if isinstance(edge_idx, tuple):
         edge_idx = (edge_idx[0].cuda(args.dev), edge_idx[1].cuda(args.dev))
@@ -89,7 +89,7 @@ def train(x, edge_idx, y, idx_split, epoch, verbose=False):
 
     stopwatch.start()
     optimizer.zero_grad()
-    output = model(x, edge_idx, node_lock=torch.Tensor([]), verbose=verbose)[idx_split]
+    output = model(x)[idx_split]
     loss = loss_fn(output, y)
     loss.backward()
     optimizer.step()
@@ -101,7 +101,7 @@ def train(x, edge_idx, y, idx_split, epoch, verbose=False):
 def eval(x, edge_idx, y, idx_split, verbose=False):
     model.eval()
     # model.set_scheme('keep', 'keep')
-    model.set_scheme('full', 'keep')
+    model.set_scheme('keep')
     x, y = x.cuda(args.dev), y.cuda(args.dev)
     if isinstance(edge_idx, tuple):
         edge_idx = (edge_idx[0].cuda(args.dev), edge_idx[1].cuda(args.dev))
@@ -112,7 +112,7 @@ def eval(x, edge_idx, y, idx_split, verbose=False):
 
     with torch.no_grad():
         stopwatch.start()
-        output = model(x, edge_idx, node_lock=idx_split, verbose=verbose)[idx_split]
+        output = model(x)[idx_split]
         stopwatch.pause()
 
         output = output.cpu().detach()
@@ -132,7 +132,7 @@ def eval(x, edge_idx, y, idx_split, verbose=False):
 
 def cal_flops(x, edge_idx, idx_split, verbose=False):
     model.eval()
-    model.set_scheme('keep', 'keep')
+    model.set_scheme('keep')
     x = x.cuda(args.dev)
     if isinstance(edge_idx, tuple):
         edge_idx = (edge_idx[0].cuda(args.dev), edge_idx[1].cuda(args.dev))
@@ -141,8 +141,7 @@ def cal_flops(x, edge_idx, idx_split, verbose=False):
 
     handle = model.register_forward_hook(models.GNNThr.batch_counter_hook)
     model.__batch_counter_handle__ = handle
-    macs, nparam = ptflops.get_model_complexity_info(model, (1,1,1),
-                        input_constructor=lambda _: {'x': x, 'edge_idx': edge_idx},
+    macs, nparam = ptflops.get_model_complexity_info(model, (nfeat,),
                         custom_modules_hooks=flops_modules_dict,
                         as_strings=False, print_per_layer_stat=verbose, verbose=verbose)
     return macs/1e9
@@ -189,13 +188,14 @@ with torch.cuda.device(args.dev):
     torch.cuda.empty_cache()
 
 adj['test'] = identity_n_norm(adj['test'], edge_weight=None, num_nodes=feat['test'].shape[0],
-                    rnorm=model.kwargs['rnorm'], diag=model.kwargs['diag'])
+                    rnorm=None, diag=None)
 acc_test, time_test, outl, labl = eval(x=feat['test'], edge_idx=adj['test'],
                                        y=labels['test'], idx_split=idx['test'])
 # mem_ram, mem_cuda = metric.get_ram(), metric.get_cuda_mem(args.dev)
 # num_param, mem_param = metric.get_num_params(model), metric.get_mem_params(model)
 macs_test = cal_flops(x=feat['test'], edge_idx=adj['test'], idx_split=idx['test'])
-numel_a, numel_w = model.get_numel()
+numel_w = model.get_numel()
+numel_a = 0
 
 # ========== Log
 if logger.lvl_config > 0:

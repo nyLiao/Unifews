@@ -5,7 +5,7 @@ data/*
 result*/
 */result/
 */results/
-save
+save*
 save/*
 wheels/*
 precompute/prop.cpp

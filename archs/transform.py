@@ -1,0 +1,137 @@
+import torch
+from torch import Tensor
+
+from torch_geometric.typing import SparseTensor
+from torch_geometric.data import Data
+from torch_geometric.data.datapipes import functional_transform
+from torch_geometric.transforms import BaseTransform
+from torch_geometric.utils import scatter, add_remaining_self_loops
+
+
+def pow_with_pinv(x: Tensor, p: float) -> Tensor:
+    r"""Inplace power operation :math:`x^p` with pseudo-inverse for :math:`p<0`.
+    """
+    x = x.pow_(p)
+    return x.masked_fill_(x == float('inf'), 0)
+
+
+@functional_transform('gen_norm')
+class GenNorm(BaseTransform):
+    r"""Generalized graph normalization.
+
+    .. math::
+        \mathbf{\hat{A}} = \mathbf{\hat{D}}^{-a} (\mathbf{A} + \mathbf{I})
+        \mathbf{\hat{D}}^{-b}
+
+    where :math:`\hat{D}_{ii} = \sum_{j=0} \hat{A}_{ij} + 1` and :math:`a,b \in [0,1]`.
+
+    Args:
+        left: left (row) normalization :math:`a`.
+        right: right (col) normalization :math:`b`. Default to :math:`1-a`.
+    """
+    def __init__(self, left: float, right: float = None,
+                 dtype: torch.dtype = torch.float32):
+        self.left = left
+        self.right = right if right is not None else (1.0 - left)
+        self.dtype = dtype
+
+    def forward(self, data: Data) -> Data:
+        assert 'edge_index' in data or 'adj_t' in data
+
+        # FIXME: Update to `EdgeIndex` [Release note 2.5.0](https://github.com/pyg-team/pytorch_geometric/releases/tag/2.5.0)
+        if 'adj_t' in data and isinstance(data.adj_t, SparseTensor):
+            deg_out = data.adj_t.sum(dim=0)
+            deg_out = pow_with_pinv(deg_out, -self.left)
+            deg_in = data.adj_t.sum(dim=1)
+            deg_in = pow_with_pinv(deg_in, -self.right)
+
+            data.adj_t = data.adj_t.mul(deg_in.view(-1, 1))
+            data.adj_t = data.adj_t.mul(deg_out.view(1, -1))
+            return data
+
+        elif 'adj_t' in data and isinstance(data.adj_t, Tensor):
+            adj_t = data.adj_t.to_sparse_coo()
+            deg_out = torch.sparse.sum(adj_t, [0]).to_dense()
+            deg_out = pow_with_pinv(deg_out, -self.left)
+            deg_in = torch.sparse.sum(adj_t, [1]).to_dense()
+            deg_in = pow_with_pinv(deg_in, -self.right)
+
+            adj_t = adj_t.mul(deg_in.view(-1, 1))
+            adj_t = adj_t.mul(deg_out.view(1, -1))
+            data.adj_t = adj_t.to_sparse_csr()
+            return data
+
+        elif 'edge_index' in data:
+            num_nodes = data.num_nodes
+            edge_index = data.edge_index
+            if data.edge_weight is None and data.edge_attr is None:
+                edge_weight = torch.ones((edge_index.size(1), ),
+                    dtype=self.dtype,
+                    device=edge_index.device)
+                key = 'edge_weight'
+            else:
+                edge_weight = data.edge_attr if data.edge_weight is None else data.edge_weight
+                key = 'edge_attr' if data.edge_weight is None else 'edge_weight'
+                assert edge_weight.dim() == 1, "Multi-dimension edge attribute not supported."
+
+            row, col = edge_index
+
+            deg_out = scatter(edge_weight, row, dim=0, dim_size=num_nodes, reduce='sum')
+            deg_out = pow_with_pinv(deg_out, -self.left)
+            deg_in = scatter(edge_weight, col, dim=0, dim_size=num_nodes, reduce='sum')
+            deg_in = pow_with_pinv(deg_in, -self.right)
+
+            edge_weight = deg_out[row] * edge_weight * deg_in[col]
+            setattr(data, key, edge_weight)
+            return data
+
+        ttype = type(data.adj_t) if 'adj_t' in data else type(data.edge_index)
+        raise NotImplementedError(f"Type {ttype} not supported!")
+
+    def __repr__(self) -> str:
+        return (f'{self.__class__.__name__}('
+                f'D^(-{self.left}) A D^(-{self.right})')
+
+
+class AddRemainingSelfLoops(BaseTransform):
+    r"""Adds remaining self-loops to the given homogeneous or heterogeneous
+    graph (functional name: :obj:`add_remaining_self_loops`).
+
+    Args:
+        attr (str, optional): The name of the attribute of edge weights
+            or multi-dimensional edge features to pass to
+            :meth:`torch_geometric.utils.add_remaining_self_loops`.
+            (default: :obj:`"edge_weight"`)
+        fill_value (float or Tensor or str, optional): The way to generate
+            edge features of self-loops (in case :obj:`attr != None`).
+            If given as :obj:`float` or :class:`torch.Tensor`, edge features of
+            self-loops will be directly given by :obj:`fill_value`.
+            If given as :obj:`str`, edge features of self-loops are computed by
+            aggregating all features of edges that point to the specific node,
+            according to a reduce operation. (:obj:`"add"`, :obj:`"mean"`,
+            :obj:`"min"`, :obj:`"max"`, :obj:`"mul"`). (default: :obj:`1.`)
+    """
+    def __init__(
+        self,
+        attr: str = 'edge_weight',
+        fill_value = 1.0,
+    ):
+        self.attr = attr
+        self.fill_value = fill_value
+
+    def forward(
+        self,
+        data,
+    ):
+        for store in data.edge_stores:
+            if store.is_bipartite() or 'edge_index' not in store:
+                continue
+
+            store.edge_index, store[self.attr] = add_remaining_self_loops(
+                store.edge_index,
+                edge_attr=store.get(self.attr, None),
+                fill_value=self.fill_value,
+                num_nodes=store.size(0),
+            )
+
+        return data

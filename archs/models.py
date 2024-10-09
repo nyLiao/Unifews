@@ -173,6 +173,29 @@ class GNNThr(nn.Module):
         module.__batch_counter__ += 1
 
 
+class GNNLPThr(GNNThr):
+    def __init__(self, nlayer, nfeat, nhidden, nclass,
+                 thr_a=0.0, thr_w=0.0, dropout: float = 0.0, layer: str = 'gcn',
+                 **kwargs,):
+        super(GNNLPThr, self).__init__(nlayer, nfeat, nhidden, nhidden,
+                                       thr_a=thr_a, thr_w=thr_w, dropout=dropout, layer=layer,
+                                       **kwargs)
+        self.lin_out = nn.ModuleList([
+            nn.Linear(nhidden, nhidden),
+            nn.Linear(nhidden, nhidden),
+            nn.Linear(nhidden, 1),
+        ])
+
+    def decode(self, x_i, x_j):
+        x = x_i * x_j
+        for lin in self.lin_out[:-1]:
+            x = lin(x)
+            x = self.act(x)
+            x = self.dropout(x)
+        x = self.lin_out[-1](x)
+        return x
+
+
 class SandwitchThr(GNNThr):
     def __init__(self, nlayer, nfeat, nhidden, nclass,
                  thr_a=0.0, thr_w=0.0, dropout: float = 0.0, layer: str = 'gcn',

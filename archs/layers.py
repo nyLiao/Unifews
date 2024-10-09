@@ -31,8 +31,7 @@ def identity_n_norm(edge_index, edge_weight=None, num_nodes=None,
             edge_index, edge_weight = add_remaining_self_loops(
                 edge_index, edge_weight, diag, num_nodes)
         if rnorm is None:
-            if edge_weight is None:
-                return edge_index
+            return edge_index
         else:
             edge_weight = torch.ones((edge_index.size(1), ), dtype=dtype,
                                      device=edge_index.device)

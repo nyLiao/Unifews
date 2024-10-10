@@ -895,6 +895,139 @@ class GCNIIConvThr(ConvThr, GCNIIConvRaw):
         module.__flops__ += f_in * (m - n)
 
 
+class SAGEConvRaw(pyg_nn.SAGEConv):
+    def __init__(self, *args, **kwargs):
+        super(SAGEConvRaw, self).__init__(*args, **kwargs)
+        self.logger_a = LayerNumLogger()
+        self.logger_w = LayerNumLogger()
+        self.logger_in = LayerNumLogger()
+        self.logger_msg = LayerNumLogger()
+
+    def forward(self, x: Tensor, edge_tuple: Tuple, **kwargs):
+        (edge_index, edge_weight) = edge_tuple
+        self.logger_a.numel_after = edge_index.shape[1]
+        self.logger_w.numel_after = self.lin_l.weight.numel()
+        if self.root_weight:
+            self.logger_w.numel_after += self.lin_r.weight.numel()
+        return super().forward(x, edge_index, edge_weight)
+
+    @classmethod
+    def cnt_flops(cls, module, input, output):
+        x_in, edge_index = input
+        x_out = output
+        f_in, f_out = x_in.shape[-1], x_out.shape[-1]
+        n, m = x_in.shape[0], edge_index.shape[1]
+
+        # Linear
+        flops_bias = f_out if module.lin_l.bias is not None else 0
+        module.__flops__ += int(f_in * f_out * n)
+        module.__flops__ += flops_bias * n
+        if module.root_weight:
+            module.__flops__ += int(f_in * f_out * n)
+        # Message
+        module.__flops__ += f_in * m
+
+
+class SAGEConvThr(ConvThr, SAGEConvRaw):
+    def __init__(self, *args, thr_a, thr_w, **kwargs):
+        super(SAGEConvThr, self).__init__(*args, thr_a=thr_a, thr_w=thr_w, **kwargs)
+        self.prune_lst = [self.lin_l]
+        if self.root_weight:
+            self.prune_lst.append(self.lin_r)
+        self.register_message_forward_hook(self.prune_on_msg)
+
+    def prune_on_msg(self, module, inputs, output):
+        if self.scheme_a in ['pruneall', 'pruneinc']:
+            if self.scheme_a == 'pruneinc':
+                raise NotImplementedError()
+            else:
+                mask_0 = torch.zeros(output.shape[0], dtype=torch.bool, device=output.device)
+
+            norm_feat_msg = torch.norm(output, dim=1)
+            norm_all_msg = torch.norm(norm_feat_msg, dim=None, p=1) / output.shape[0]
+            mask_cmp = norm_feat_msg < self.threshold_a * norm_all_msg
+            mask_0 = torch.logical_or(mask_0, mask_cmp)
+            mask_0[self.idx_lock] = False
+            output[mask_0] = 0
+            self.idx_keep = torch.where(~mask_0)[0]
+        elif self.scheme_a == 'keep':
+            mask_0 = torch.ones(output.shape[0], dtype=torch.bool)
+            mask_0[self.idx_keep] = False
+            mask_0[self.idx_lock] = False
+            output[mask_0] = 0
+        return output
+
+    def forward(self, x: Tensor, edge_tuple: Tuple,
+                node_lock: OptTensor = None, verbose: bool = False):
+        def prune_w(lin, xx):
+            if self.scheme_w in ['pruneall', 'pruneinc']:
+                if self.scheme_w == 'pruneall':
+                    if prune.is_pruned(lin):
+                        rewind(lin, 'weight')
+                else:
+                    if prune.is_pruned(lin):
+                        prune.remove(lin, 'weight')
+                norm_node_in = torch.norm(xx, dim=0)
+                norm_all_in = torch.norm(norm_node_in, dim=None) / xx.shape[1]
+                if norm_all_in > 1e-8:
+                    threshold_wi = self.threshold_w * norm_all_in / norm_node_in
+                    ThrInPrune.apply(lin, 'weight', threshold_wi)
+                xx = lin(xx)
+            elif self.scheme_w == 'keep':
+                xx = lin(xx)
+            elif self.scheme_w == 'full':
+                raise NotImplementedError()
+            return xx
+
+        (edge_index, edge_weight) = edge_tuple
+        if isinstance(x, Tensor):
+            x = (x, x)
+
+        assert self.project == False, NotImplementedError()
+        self.idx_lock = self.get_idx_lock(edge_index, node_lock)
+        out = self.propagate(edge_index, x=x, edge_weight=edge_weight, size=None)
+
+        out = prune_w(self.lin_l, out)
+        x_r = x[1]
+        if self.root_weight and x_r is not None:
+            out = out + prune_w(self.lin_r, x_r)
+
+        if self.normalize:
+            out = F.normalize(out, p=2., dim=-1)
+
+        self.logger_w.numel_before = self.lin_l.weight.numel()
+        self.logger_w.numel_after = torch.sum(self.lin_l.weight != 0).item()
+        if self.root_weight:
+            self.logger_w.numel_before += self.lin_r.weight.numel()
+            self.logger_w.numel_after += torch.sum(self.lin_r.weight != 0).item()
+
+        if self.scheme_a in ['pruneall', 'pruneinc', 'keep']:
+            self.logger_a.numel_before = edge_index.shape[1]
+            self.logger_a.numel_after = self.idx_keep.shape[0]
+            edge_index = edge_index[:, self.idx_keep]
+            edge_weight = edge_weight[self.idx_keep]
+            # print(f"  A: {self.logger_a}, W: {self.logger_w}")
+        else:
+            self.logger_a.numel_before = edge_index.shape[1]
+            self.logger_a.numel_after = edge_index.shape[1]
+
+        with torch.cuda.device(edge_index.device):
+            torch.cuda.empty_cache()
+        return out, (edge_index, edge_weight)
+
+    @classmethod
+    def cnt_flops(cls, module, input, output):
+        x_in, _ = input
+        x_out, (edge_index, edge_weight) = output
+        f_in, f_out = x_in.shape[-1], x_out.shape[-1]
+        n, m = x_in.shape[0], edge_index.shape[1]
+
+        module.__flops__ += int((f_in * f_out * module.logger_w.ratio) * n)
+        if module.root_weight:
+            module.__flops__ += int(f_in * f_out * module.logger_w.ratio * n)
+        module.__flops__ += f_in * (m - n)
+
+
 # ==========
 def Linear_cnt_flops(module, input, output):
     input = input[0]
@@ -921,6 +1054,8 @@ layer_dict = {
     'gin': GINConvRaw,
     'gcn2': GCNIIConvRaw,
     'gcn2_thr': GCNIIConvThr,
+    'gsage': SAGEConvRaw,
+    'gsage_thr': SAGEConvThr,
 }
 
 flops_modules_dict = {
@@ -933,4 +1068,6 @@ flops_modules_dict = {
     GATv2ConvThr: GATv2ConvThr.cnt_flops,
     GCNIIConvRaw: GCNIIConvRaw.cnt_flops,
     GCNIIConvThr: GCNIIConvThr.cnt_flops,
+    SAGEConvRaw: SAGEConvRaw.cnt_flops,
+    SAGEConvThr: SAGEConvThr.cnt_flops,
 }

@@ -47,7 +47,7 @@ model_logger = ModelLogger(logger,
                 patience=args.patience,
                 cmp='max',
                 prefix='model'+args.suffix,
-                storage='state_ram' if args.data in ['cs', 'physics'] else 'state_gpu')
+                storage='state_ram' if args.data in ['cs', 'physics', 'arxiv'] else 'state_gpu')
 stopwatch = metric.Stopwatch()
 
 # ========== Load
@@ -181,7 +181,7 @@ for epoch in range(1, args.epochs+1):
     acc_best = model_logger.save_best(acc_val, epoch=epoch)
     if model_logger.is_early_stop(epoch=epoch):
         pass
-    #     break     # Enable to early stop
+        # break     # Enable to early stop
     else:
         epoch_conv = max(0, epoch - model_logger.patience)
 

@@ -42,7 +42,18 @@ kwargs_default = {
         'rnorm': 0.5,
         'diag': 1.,
         'depth_inv': True,
-    }
+    },
+    'gsage': {
+        'aggr': 'mean',
+        'improved': False,
+        'normalize': False,
+        'root_weight': True,
+        'project': False,
+        'bias': True,
+        'rnorm': 0.5,
+        'diag': 1.,
+        'depth_inv': False,
+    },
 }
 
 

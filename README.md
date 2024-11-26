@@ -3,27 +3,30 @@ This is the original code for *Unifews: Unified Entry-Wise Sparsification for Ef
 
 ## Dependencies
 ### Python
-In `env.txt` and can be installed by:
+Installed `env.txt` by conda:
 ```bash
 conda create --name <env> --file env.txt
 ```
 
 ### C++
+* C++ 14
+* CMake 3.16
 * [eigen3](https://eigen.tuxfamily.org/index.php?title=Main_Page)
 
 ## Experiment
 ### Data Preparation
 1. Use `utils/data_transfer.py` to generate processed files under path `data/[dataset_name]` similar to the example folder `data/cora`:
+  * `adj.npz`: adjacency matrix in scipy.sparse.csr_matrix
   * `feats.npy`: features in .npy array
   * `labels.npz`: node label information
     * 'label': labels (number or one-hot)
     * 'idx_train/idx_val/idx_test': indices of training/validation/test nodes
-  * `adj_el.bin`, `adj_pl.bin`, `attribute.txt`, `deg.npz`: graph files for precomputation
+  * `adj_el.bin`, `adj_pl.bin`, `attribute.txt`, `degree.npz`: graph files for precomputation
 
 ### Decoupled Model Propagation
-1. Environment: CMake 3.16, C++ 14. 
-2. Compile Cython:
+1. Compile Cython:
 ```bash
+cd precompute
 python setup.py build_ext --inplace
 ```
 
